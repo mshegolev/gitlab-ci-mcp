@@ -1,5 +1,10 @@
 # gitlab-ci-mcp
 
+[![PyPI](https://img.shields.io/pypi/v/gitlab-ci-mcp.svg?logo=pypi&logoColor=white)](https://pypi.org/project/gitlab-ci-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/gitlab-ci-mcp.svg?logo=python&logoColor=white)](https://pypi.org/project/gitlab-ci-mcp/)
+[![License: MIT](https://img.shields.io/pypi/l/gitlab-ci-mcp.svg)](LICENSE)
+[![Downloads](https://static.pepy.tech/badge/gitlab-ci-mcp/month)](https://pepy.tech/project/gitlab-ci-mcp)
+
 MCP server for GitLab CI/CD. Lets an LLM agent (Claude Code, Cursor, OpenCode, DevX Agent, etc.) work with pipelines, jobs, schedules, branches, tags, merge requests and repository files.
 
 Python, [FastMCP](https://github.com/modelcontextprotocol/python-sdk), stdio transport.
