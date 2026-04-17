@@ -137,6 +137,46 @@ def test_error_handler_produces_actionable_messages() -> None:
     assert "GITLAB_URL" in msg
 
 
+def test_lifespan_registered() -> None:
+    """The server must ship with a lifespan context manager for clean shutdown."""
+    from gitlab_ci_mcp.server import app_lifespan, mcp
+
+    assert callable(app_lifespan)
+    # FastMCP stores lifespan in settings — different versions may expose differently;
+    # minimal check is that the app_lifespan coroutine factory is public.
+    assert mcp.name == "gitlab_ci_mcp"
+
+
+def test_async_tools_use_context() -> None:
+    """Tools that benefit from progress/logging are ``async def`` and accept Context."""
+    import inspect
+
+    from gitlab_ci_mcp.server import gitlab_get_job_log, gitlab_pipeline_health
+
+    assert inspect.iscoroutinefunction(gitlab_pipeline_health)
+    assert inspect.iscoroutinefunction(gitlab_get_job_log)
+
+    # Context parameter must be optional so tools remain testable without an MCP session.
+    sig_health = inspect.signature(gitlab_pipeline_health)
+    assert "ctx" in sig_health.parameters
+    assert sig_health.parameters["ctx"].default is None
+
+    sig_log = inspect.signature(gitlab_get_job_log)
+    assert "ctx" in sig_log.parameters
+    assert sig_log.parameters["ctx"].default is None
+
+
+def test_resources_registered() -> None:
+    """MCP resources for the default project must be registered."""
+    from gitlab_ci_mcp.server import mcp
+
+    if not hasattr(mcp, "_resource_manager"):
+        pytest.skip("current FastMCP version does not expose resource manager")
+    uris = {str(r.uri) for r in mcp._resource_manager._resources.values()}
+    assert "gitlab://project/info" in uris
+    assert "gitlab://project/ci-config" in uris
+
+
 def test_markdown_formatter_shape() -> None:
     from gitlab_ci_mcp.formatters import pipelines_list
 

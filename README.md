@@ -13,6 +13,19 @@ Works with any GitLab — SaaS `gitlab.com` or self-hosted / on-prem. Designed w
 - **Structured errors** — authentication, 404, 403, rate-limit, missing-env errors are converted to actionable messages (e.g. _"GitLab authentication failed… verify GITLAB_TOKEN has `api` scope"_) instead of raw tracebacks.
 - **Pydantic input validation** — every argument has typed constraints (ranges, lengths, literals) auto-exposed as JSON Schema.
 - **Project scoping per call** — every tool accepts an optional `project_path` that overrides `GITLAB_PROJECT_PATH` for cross-project queries.
+- **Pagination** — list tools return a `pagination` block with `page`, `total`, `has_more`, `next_page` and a next-page hint in the markdown footer.
+- **MCP Context integration** — `gitlab_pipeline_health` and `gitlab_get_job_log` are `async` and emit `info` logs / `report_progress` events through the MCP Context so clients can show progress bars.
+- **MCP Resources** — `gitlab://project/info` and `gitlab://project/ci-config` mirror common lookups for clients that prefer the Resource model over tools.
+- **Lifespan management** — `python-gitlab` HTTP sessions are closed cleanly on server shutdown via an `asynccontextmanager` lifespan hook.
+
+### Threading model
+
+FastMCP automatically runs synchronous tools in a worker thread
+(`anyio.to_thread.run_sync`), so they do not block the asyncio event loop —
+`python-gitlab` is a synchronous library and wrapping every call in
+`asyncio.to_thread` ourselves would be ceremony. Tools that benefit from the
+MCP Context (progress, info logs) are written as `async def` and explicitly
+wrap `python-gitlab` calls with `asyncio.to_thread`.
 
 ## Features
 

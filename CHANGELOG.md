@@ -3,6 +3,23 @@
 All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use [SemVer](https://semver.org/).
 
+## [0.4.0] — 2026-04-17
+
+### Added
+- **Lifespan management** (`asynccontextmanager`) — `python-gitlab` HTTP
+  sessions closed cleanly on server shutdown.
+- **MCP Context integration** — `gitlab_pipeline_health` and
+  `gitlab_get_job_log` are now `async def` and emit `ctx.info` / `ctx.report_progress`
+  events, letting clients display progress for the slower operations.
+- **MCP Resources** — `gitlab://project/info` (markdown snapshot of the default
+  project) and `gitlab://project/ci-config` (raw `.gitlab-ci.yml`).
+- Tests for lifespan, async tools' Context parameters, and resource registration.
+
+### Changed
+- README: "Design highlights" section extended with Lifespan / Context /
+  Resources entries and a "Threading model" subsection documenting why most
+  tools remain sync (FastMCP runs them in a worker thread).
+
 ## [0.3.1] — 2026-04-17
 
 ### Added

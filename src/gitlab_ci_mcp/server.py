@@ -18,11 +18,13 @@ from __future__ import annotations
 import json
 import logging
 import warnings
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Annotated, Any, Literal
 
 import urllib3
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
 from gitlab_ci_mcp import errors, formatters, pagination
@@ -33,9 +35,27 @@ urllib3.disable_warnings()
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("gitlab_ci_mcp")
-
 _managers: dict[str, GitLabCIManager] = {}
+
+
+@asynccontextmanager
+async def app_lifespan(_app: FastMCP) -> AsyncIterator[dict[str, Any]]:
+    """Server lifespan: nothing to eagerly init, but close python-gitlab
+    HTTP sessions on shutdown to avoid leaked sockets."""
+    logger.debug("gitlab_ci_mcp: startup — managers lazy-loaded per project")
+    try:
+        yield {"managers": _managers}
+    finally:
+        for m in _managers.values():
+            try:
+                m.gl.session.close()
+            except Exception:
+                pass
+        _managers.clear()
+        logger.debug("gitlab_ci_mcp: shutdown — all python-gitlab sessions closed")
+
+
+mcp = FastMCP("gitlab_ci_mcp", lifespan=app_lifespan)
 
 
 class ResponseFormat(str, Enum):
@@ -286,7 +306,7 @@ def gitlab_get_pipeline_jobs(
         "openWorldHint": True,
     },
 )
-def gitlab_get_job_log(
+async def gitlab_get_job_log(
     job_id: Annotated[int, Field(description="Numeric job ID (from ``gitlab_get_pipeline_jobs``).", gt=0)],
     tail: Annotated[
         int,
@@ -294,19 +314,27 @@ def gitlab_get_job_log(
     ] = 100,
     project_path: ProjectPath = None,
     response_format: ResponseFormatParam = ResponseFormat.MARKDOWN,
+    ctx: Context | None = None,
 ) -> str:
     """Fetch the trace/log of a job, limited to the last ``tail`` lines.
 
     Long logs are truncated to save context. Start with the default 100 lines
     and ask for more if you need older context.
 
+    Uses MCP Context to log the fetch, which helps track which job's log
+    was requested when scanning multi-turn transcripts.
+
     Examples:
         - "Why did job 789 fail" → default tail=100, look at the end of the log
         - "Show me the first stage output of job 789" → ``tail=5000`` and scan for stage separator
     """
+    import asyncio
+
     try:
-        ci = _get_ci(project_path)
-        log = ci.get_job_log(job_id)
+        if ctx:
+            await ctx.info(f"Fetching log of job {job_id} (tail={tail})")
+        ci = await asyncio.to_thread(_get_ci, project_path)
+        log = await asyncio.to_thread(ci.get_job_log, job_id)
         lines = log.splitlines()
         total = len(lines)
         if tail and tail < total:
@@ -454,7 +482,7 @@ def gitlab_cancel_pipeline(
         "openWorldHint": True,
     },
 )
-def gitlab_pipeline_health(
+async def gitlab_pipeline_health(
     ref: Annotated[
         str, Field(default="master", description="Branch to analyse.", min_length=1, max_length=255)
     ] = "master",
@@ -464,6 +492,7 @@ def gitlab_pipeline_health(
     ] = "schedule",
     project_path: ProjectPath = None,
     response_format: ResponseFormatParam = ResponseFormat.MARKDOWN,
+    ctx: Context | None = None,
 ) -> str:
     """Aggregate success rate over 7 and 30 days with a trend indicator.
 
@@ -471,16 +500,28 @@ def gitlab_pipeline_health(
     schedule on ``master``?". Returns success rate %, totals, last-10 statuses
     and a trend (``up``/``down``/``flat``).
 
+    Emits progress via the MCP Context (``info`` log + ``report_progress``) —
+    useful in IDEs that show per-tool progress bars.
+
     Examples:
         - "How stable is master" → default (``ref='master'``, ``source='schedule'``)
         - "Push-driven pipeline health" → ``source='push'``
         - Don't use for a single pipeline — use ``gitlab_get_pipeline``.
     """
+    import asyncio
+
     from gitlab_ci_mcp.pipeline_health import PipelineHealthCollector
 
     try:
-        ci = _get_ci(project_path)
-        report = PipelineHealthCollector(ci).collect(ref=ref, source=source)
+        if ctx:
+            await ctx.info(f"Fetching 30 days of '{source}' pipelines on {ref}")
+            await ctx.report_progress(0.1, total=1.0, message="connecting")
+        ci = await asyncio.to_thread(_get_ci, project_path)
+        if ctx:
+            await ctx.report_progress(0.3, total=1.0, message="loading pipelines")
+        report = await asyncio.to_thread(PipelineHealthCollector(ci).collect, ref, source)
+        if ctx:
+            await ctx.report_progress(1.0, total=1.0, message="done")
         data = {
             "project": ci.project_path,
             "ref": ref,
@@ -1311,11 +1352,70 @@ def gitlab_project_info(
         return errors.handle(exc, "getting project info")
 
 
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ MCP Resources — static URI templates that mirror common tool calls       ║
+# ║ so clients that prefer the "resource" model can reach the same data.     ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+
+@mcp.resource(
+    "gitlab://project/info",
+    name="Project Info",
+    description="Metadata of the default project (GITLAB_PROJECT_PATH).",
+    mime_type="text/markdown",
+)
+def project_info_resource() -> str:
+    """Markdown snapshot of the default project, exposed as an MCP resource."""
+    try:
+        ci = _get_ci(None)
+        p = ci.project
+        data = {
+            "id": p.id,
+            "name": p.name,
+            "path_with_namespace": p.path_with_namespace,
+            "default_branch": p.default_branch,
+            "web_url": p.web_url,
+            "visibility": getattr(p, "visibility", None),
+            "created_at": _ts(getattr(p, "created_at", None)),
+            "last_activity_at": _ts(getattr(p, "last_activity_at", None)),
+            "open_issues_count": getattr(p, "open_issues_count", None),
+            "forks_count": getattr(p, "forks_count", None),
+            "star_count": getattr(p, "star_count", None),
+        }
+        return formatters.project_info(data)
+    except Exception as exc:
+        return errors.handle(exc, "reading project info resource")
+
+
+@mcp.resource(
+    "gitlab://project/ci-config",
+    name="CI Config",
+    description="Contents of .gitlab-ci.yml on the default branch.",
+    mime_type="text/yaml",
+)
+def ci_config_resource() -> str:
+    """Raw ``.gitlab-ci.yml`` of the default project on its default branch."""
+    try:
+        ci = _get_ci(None)
+        ref = ci.project.default_branch or "master"
+        f = ci.project.files.get(file_path=".gitlab-ci.yml", ref=ref)
+        return f.decode().decode("utf-8", errors="replace")
+    except Exception as exc:
+        return errors.handle(exc, "reading .gitlab-ci.yml resource")
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
 def main() -> None:
-    """Entry point for the ``gitlab-ci-mcp`` console script (stdio transport)."""
+    """Entry point for the ``gitlab-ci-mcp`` console script (stdio transport).
+
+    **Threading model**: FastMCP automatically runs synchronous tools in a
+    worker thread (``anyio.to_thread.run_sync``), so they do not block the
+    asyncio event loop. Tools that benefit from MCP ``Context`` (progress /
+    logging) are written as ``async def`` and wrap ``python-gitlab`` calls
+    with ``asyncio.to_thread`` explicitly.
+    """
     mcp.run()
 
 
