@@ -1,5 +1,7 @@
 # gitlab-ci-mcp
 
+<!-- mcp-name: io.github.mshegolev/gitlab-ci-mcp -->
+
 [![PyPI](https://img.shields.io/pypi/v/gitlab-ci-mcp.svg?logo=pypi&logoColor=white)](https://pypi.org/project/gitlab-ci-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/gitlab-ci-mcp.svg?logo=python&logoColor=white)](https://pypi.org/project/gitlab-ci-mcp/)
 [![License: MIT](https://img.shields.io/pypi/l/gitlab-ci-mcp.svg)](LICENSE)

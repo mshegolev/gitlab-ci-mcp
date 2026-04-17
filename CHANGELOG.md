@@ -3,6 +3,13 @@
 All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use [SemVer](https://semver.org/).
 
+## [0.5.1] — 2026-04-18
+
+### Added
+- `mcp-name: io.github.mshegolev/gitlab-ci-mcp` marker in README —
+  required for ownership verification when publishing to the official
+  [MCP Registry](https://registry.modelcontextprotocol.io/).
+
 ## [0.5.0] — 2026-04-17
 
 **Big one.** Every tool is now a fully typed MCP citizen: ``outputSchema``,
