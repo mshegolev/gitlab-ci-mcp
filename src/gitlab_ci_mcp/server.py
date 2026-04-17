@@ -25,7 +25,7 @@ import urllib3
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from gitlab_ci_mcp import errors, formatters
+from gitlab_ci_mcp import errors, formatters, pagination
 from gitlab_ci_mcp.ci_manager import GitLabCIManager
 
 warnings.filterwarnings("ignore")
@@ -142,8 +142,9 @@ def gitlab_list_pipelines(
         PipelineSource | None, Field(default=None, description="Filter by pipeline trigger source.")
     ] = None,
     per_page: Annotated[
-        int, Field(default=20, ge=1, le=100, description="Number of pipelines to return (1–100).")
+        int, Field(default=20, ge=1, le=100, description="Items per page (1–100).")
     ] = 20,
+    page: Annotated[int, Field(default=1, ge=1, description="1-based page number.")] = 1,
     project_path: ProjectPath = None,
     response_format: ResponseFormatParam = ResponseFormat.MARKDOWN,
 ) -> str:
@@ -153,12 +154,19 @@ def gitlab_list_pipelines(
     or feeding pipeline IDs into follow-up calls. Read-only and idempotent.
 
     Returns:
-        A markdown table with columns ``ID | Status | Ref | Source | Duration | Created``
-        — or the equivalent JSON object with keys ``project``, ``count``, ``pipelines[]``.
+        Markdown table or JSON with keys ``project``, ``count``, ``pagination`` and
+        ``pipelines[]`` (each with ``id``, ``status``, ``ref``, ``source``, ``duration``,
+        ``created_at``, ``web_url``).
+
+    Examples:
+        - "Show failed pipelines on master" → ``status='failed'``, ``ref='master'``
+        - "Last nightly schedule runs" → ``source='schedule'``
+        - "Second page of pipelines" → ``page=2``
+        - Don't use when you have a specific pipeline ID — use ``gitlab_get_pipeline`` instead.
     """
     try:
         ci = _get_ci(project_path)
-        kwargs: dict[str, Any] = {"per_page": per_page}
+        kwargs: dict[str, Any] = {"per_page": per_page, "page": page, "get_all": False}
         if ref:
             kwargs["ref"] = ref
         if status:
@@ -169,6 +177,7 @@ def gitlab_list_pipelines(
         data = {
             "project": ci.project_path,
             "count": len(pipelines),
+            "pagination": pagination.extract(pipelines),
             "pipelines": [
                 {
                     "id": p.id,
@@ -206,6 +215,11 @@ def gitlab_get_pipeline(
 
     Useful right after ``gitlab_list_pipelines`` — lists only return summaries.
     Returns status, ref, source, durations (queued/total), and started/finished timestamps.
+
+    Examples:
+        - "Why was pipeline 123 slow" → check ``queued_duration`` and ``duration`` fields
+        - "Is pipeline 456 still running" → look at ``status``
+        - Don't use to see individual jobs — use ``gitlab_get_pipeline_jobs``.
     """
     try:
         ci = _get_ci(project_path)
@@ -247,6 +261,11 @@ def gitlab_get_pipeline_jobs(
 
     Use after noticing a failed pipeline to drill down into which specific job
     broke and fetch its log via ``gitlab_get_job_log``.
+
+    Examples:
+        - "What jobs are in pipeline 123" → ``pipeline_id=123``
+        - "Which job failed in pipeline 456" → filter result by ``status='failed'`` client-side
+        - Don't use for overall pipeline status — use ``gitlab_get_pipeline`` instead.
     """
     try:
         ci = _get_ci(project_path)
@@ -280,6 +299,10 @@ def gitlab_get_job_log(
 
     Long logs are truncated to save context. Start with the default 100 lines
     and ask for more if you need older context.
+
+    Examples:
+        - "Why did job 789 fail" → default tail=100, look at the end of the log
+        - "Show me the first stage output of job 789" → ``tail=5000`` and scan for stage separator
     """
     try:
         ci = _get_ci(project_path)
@@ -325,6 +348,11 @@ def gitlab_trigger_pipeline(
     your runners — avoid calling in loops.
 
     Returns JSON with ``pipeline_id``, ``status``, ``ref``, ``web_url``, ``created_at``.
+
+    Examples:
+        - "Run the pipeline on master" → default (``ref='master'``)
+        - "Run the pipeline on feature/x with DEBUG=1" → ``ref='feature/x'``, ``variables={'DEBUG': '1'}``
+        - Don't call to retry — use ``gitlab_retry_pipeline`` which keeps the same pipeline ID.
     """
     try:
         ci = _get_ci(project_path)
@@ -433,6 +461,11 @@ def gitlab_pipeline_health(
     Great for stand-ups and on-call hand-offs: "How healthy is our nightly
     schedule on ``master``?". Returns success rate %, totals, last-10 statuses
     and a trend (``up``/``down``/``flat``).
+
+    Examples:
+        - "How stable is master" → default (``ref='master'``, ``source='schedule'``)
+        - "Push-driven pipeline health" → ``source='push'``
+        - Don't use for a single pipeline — use ``gitlab_get_pipeline``.
     """
     from gitlab_ci_mcp.pipeline_health import PipelineHealthCollector
 
@@ -662,7 +695,8 @@ def gitlab_list_branches(
         str | None,
         Field(default=None, description="Substring match on branch name (case-insensitive).", max_length=255),
     ] = None,
-    per_page: Annotated[int, Field(default=20, ge=1, le=100, description="Number of branches to return.")] = 20,
+    per_page: Annotated[int, Field(default=20, ge=1, le=100, description="Items per page (1–100).")] = 20,
+    page: Annotated[int, Field(default=1, ge=1, description="1-based page number.")] = 1,
     project_path: ProjectPath = None,
     response_format: ResponseFormatParam = ResponseFormat.MARKDOWN,
 ) -> str:
@@ -670,16 +704,23 @@ def gitlab_list_branches(
 
     Includes ``default``, ``protected`` and ``merged`` flags, and the short id
     of the tip commit with its title and date.
+
+    Examples:
+        - "List all branches with 'release' in name" → ``search='release'``
+        - "Next page of branches" → ``page=2``
+        - Don't use when you want to check if a specific branch exists by exact name —
+          use ``gitlab_get_file`` on that ref and look at the error instead.
     """
     try:
         ci = _get_ci(project_path)
-        kwargs: dict[str, Any] = {"per_page": per_page}
+        kwargs: dict[str, Any] = {"per_page": per_page, "page": page, "get_all": False}
         if search:
             kwargs["search"] = search
         branches = ci.project.branches.list(**kwargs)
         data = {
             "project": ci.project_path,
             "count": len(branches),
+            "pagination": pagination.extract(branches),
             "branches": [
                 {
                     "name": b.name,
@@ -712,23 +753,35 @@ def gitlab_list_tags(
     search: Annotated[
         str | None, Field(default=None, description="Substring match on tag name.", max_length=255)
     ] = None,
-    per_page: Annotated[int, Field(default=20, ge=1, le=100, description="Number of tags to return.")] = 20,
+    per_page: Annotated[int, Field(default=20, ge=1, le=100, description="Items per page (1–100).")] = 20,
+    page: Annotated[int, Field(default=1, ge=1, description="1-based page number.")] = 1,
     project_path: ProjectPath = None,
     response_format: ResponseFormatParam = ResponseFormat.MARKDOWN,
 ) -> str:
     """List tags of a project, newest first.
 
     Useful for release-note generation or checking the last shipped version.
+
+    Examples:
+        - "What was the last release tag" → default call, take the first item
+        - "All v2.x releases" → ``search='v2.'``
     """
     try:
         ci = _get_ci(project_path)
-        kwargs: dict[str, Any] = {"per_page": per_page, "order_by": "updated", "sort": "desc"}
+        kwargs: dict[str, Any] = {
+            "per_page": per_page,
+            "page": page,
+            "order_by": "updated",
+            "sort": "desc",
+            "get_all": False,
+        }
         if search:
             kwargs["search"] = search
         tags = ci.project.tags.list(**kwargs)
         data = {
             "project": ci.project_path,
             "count": len(tags),
+            "pagination": pagination.extract(tags),
             "tags": [
                 {
                     "name": t.name,
@@ -764,18 +817,27 @@ MRState = Literal["opened", "closed", "merged", "locked", "all"]
 )
 def gitlab_list_merge_requests(
     state: Annotated[MRState, Field(default="opened", description="Filter by MR state.")] = "opened",
-    per_page: Annotated[int, Field(default=20, ge=1, le=100, description="Number of MRs to return.")] = 20,
+    per_page: Annotated[int, Field(default=20, ge=1, le=100, description="Items per page (1–100).")] = 20,
+    page: Annotated[int, Field(default=1, ge=1, description="1-based page number.")] = 1,
     project_path: ProjectPath = None,
     response_format: ResponseFormatParam = ResponseFormat.MARKDOWN,
 ) -> str:
-    """List merge requests of a project, optionally filtered by state."""
+    """List merge requests of a project, optionally filtered by state.
+
+    Examples:
+        - "What MRs are open right now" → default (state='opened')
+        - "What merged last week" → ``state='merged'`` then filter by ``updated_at`` client-side
+        - "Everything regardless of state" → ``state='all'``
+        - Don't use when you have an MR IID — use ``gitlab_get_merge_request`` for detail.
+    """
     try:
         ci = _get_ci(project_path)
-        mrs = ci.project.mergerequests.list(state=state, per_page=per_page)
+        mrs = ci.project.mergerequests.list(state=state, per_page=per_page, page=page, get_all=False)
         data = {
             "project": ci.project_path,
             "state": state,
             "count": len(mrs),
+            "pagination": pagination.extract(mrs),
             "merge_requests": [
                 {
                     "iid": mr.iid,
@@ -972,6 +1034,10 @@ def gitlab_merge_mr(
     **Destructive**: writes to the target branch. Checks ``merge_status`` first
     and returns ``status='cannot_merge'`` if conflicts exist or pipelines are
     required.
+
+    Examples:
+        - "Merge !42" → ``mr_iid=42``
+        - Don't call without checking ``gitlab_get_merge_request`` first when you suspect conflicts.
     """
     try:
         ci = _get_ci(project_path)
@@ -1026,6 +1092,11 @@ def gitlab_get_file(
 
     For binaries, gets decoded as UTF-8 with errors replaced — you will likely
     get garbage; use for text content only.
+
+    Examples:
+        - "Show me .gitlab-ci.yml on master" → ``file_path='.gitlab-ci.yml'``
+        - "Read src/app.py from the release-1.2 tag" → ``file_path='src/app.py'``, ``ref='release-1.2'``
+        - Don't use for listings — use ``gitlab_list_repository_tree``.
     """
     try:
         ci = _get_ci(project_path)
@@ -1064,19 +1135,29 @@ def gitlab_list_repository_tree(
         str, Field(default="master", description="Branch, tag or SHA.", min_length=1, max_length=255)
     ] = "master",
     recursive: Annotated[bool, Field(default=False, description="Recurse into subdirectories.")] = False,
-    per_page: Annotated[int, Field(default=50, ge=1, le=100, description="Entries per request.")] = 50,
+    per_page: Annotated[int, Field(default=50, ge=1, le=100, description="Items per page (1–100).")] = 50,
+    page: Annotated[int, Field(default=1, ge=1, description="1-based page number.")] = 1,
     project_path: ProjectPath = None,
     response_format: ResponseFormatParam = ResponseFormat.MARKDOWN,
 ) -> str:
-    """List files and directories at a given path in the repository."""
+    """List files and directories at a given path in the repository.
+
+    Examples:
+        - "Show top-level files" → default call
+        - "All .py files recursively" → ``recursive=True`` then filter on ``.py`` in path
+        - Don't use for full-text content — use ``gitlab_get_file`` for that.
+    """
     try:
         ci = _get_ci(project_path)
-        items = ci.project.repository_tree(path=path, ref=ref, recursive=recursive, per_page=per_page)
+        items = ci.project.repository_tree(
+            path=path, ref=ref, recursive=recursive, per_page=per_page, page=page, get_all=False
+        )
         data = {
             "project": ci.project_path,
             "path": path or "/",
             "ref": ref,
             "count": len(items),
+            "pagination": pagination.extract(items),
             "items": [{"name": item["name"], "type": item["type"], "path": item["path"]} for item in items],
         }
         return _render(data, response_format, formatters.repo_tree)
@@ -1105,6 +1186,10 @@ def gitlab_compare_branches(
     """Compare two branches — returns up to 30 commits and the list of changed files.
 
     Use for "what's in ``release/x.y`` vs ``master``?" or for release-note drafting.
+
+    Examples:
+        - "What's new in release/1.5 vs master" → ``source='release/1.5'``, ``target='master'``
+        - Don't use to fetch full diffs of an MR — use ``gitlab_get_merge_request_changes``.
     """
     try:
         ci = _get_ci(project_path)

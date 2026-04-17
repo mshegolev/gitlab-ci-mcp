@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from gitlab_ci_mcp.pagination import footer_md
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 
@@ -47,6 +49,9 @@ def pipelines_list(d: dict) -> str:
             f"| [{p['id']}]({p['web_url']}) | {p['status']} | `{p['ref']}` | "
             f"{_dash(p.get('source'))} | {_dur(p.get('duration'))} | {p.get('created_at') or '—'} |"
         )
+    if d.get("pagination"):
+        lines.append("")
+        lines.append(footer_md(d["pagination"]))
     return "\n".join(lines)
 
 
@@ -148,6 +153,9 @@ def branches_list(d: dict) -> str:
             f"{'✓' if b.get('protected') else ''} | {'✓' if b.get('merged') else ''} | "
             f"{_dash(b.get('commit_short_id'))} — {_dash(b.get('commit_title'))} ({_dash(b.get('committed_date'))}) |"
         )
+    if d.get("pagination"):
+        lines.append("")
+        lines.append(footer_md(d["pagination"]))
     return "\n".join(lines)
 
 
@@ -164,6 +172,9 @@ def tags_list(d: dict) -> str:
             f"| `{t['name']}` | {_dash(t.get('commit_short_id'))} | "
             f"{_dash(t.get('committed_date'))} | {msg} |"
         )
+    if d.get("pagination"):
+        lines.append("")
+        lines.append(footer_md(d["pagination"]))
     return "\n".join(lines)
 
 
@@ -190,6 +201,9 @@ def mrs_list(d: dict) -> str:
             f"{_dash(m.get('author'))} | {m['state']}/{_dash(m.get('merge_status'))} | "
             f"{m.get('updated_at') or '—'} |"
         )
+    if d.get("pagination"):
+        lines.append("")
+        lines.append(footer_md(d["pagination"]))
     return "\n".join(lines)
 
 
@@ -257,8 +271,11 @@ def repo_tree(d: dict) -> str:
         lines.append("_Empty directory or path not found._")
         return "\n".join(lines)
     for item in d["items"]:
-        icon = "📁" if item["type"] == "tree" else "📄"
-        lines.append(f"- {icon} `{item['path']}`")
+        icon = "dir" if item["type"] == "tree" else "file"
+        lines.append(f"- [{icon}] `{item['path']}`")
+    if d.get("pagination"):
+        lines.append("")
+        lines.append(footer_md(d["pagination"]))
     return "\n".join(lines)
 
 

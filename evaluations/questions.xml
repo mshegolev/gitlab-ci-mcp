@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Tool-picking evaluations for gitlab-ci-mcp.
+  Each qa_pair asks the agent to pick the right tool. Answer = tool name.
+  Verifiable by string match on the tool the agent actually invokes.
+-->
+<evaluation>
+
+  <qa_pair>
+    <question>Show me the last failed pipelines on master in our project.</question>
+    <answer>gitlab_list_pipelines</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>How healthy is the nightly schedule on master over the past 7 and 30 days?</question>
+    <answer>gitlab_pipeline_health</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Pipeline 12345 is still running — check its current status.</question>
+    <answer>gitlab_get_pipeline</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Which specific job failed in pipeline 12345?</question>
+    <answer>gitlab_get_pipeline_jobs</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Show me the last 200 lines of the log for job 98765.</question>
+    <answer>gitlab_get_job_log</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Kick off a new pipeline on master with DEBUG=1.</question>
+    <answer>gitlab_trigger_pipeline</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Retry the failed jobs in pipeline 12345.</question>
+    <answer>gitlab_retry_pipeline</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Cancel pipeline 12345, it's stuck.</question>
+    <answer>gitlab_cancel_pipeline</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>What CI/CD schedules are configured and are they all active?</question>
+    <answer>gitlab_list_schedules</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Delete the broken schedule with ID 42.</question>
+    <answer>gitlab_delete_schedule</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Add a new schedule that runs the build every night at 02:00 Europe/Berlin.</question>
+    <answer>gitlab_create_schedule</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>List every open merge request in the project.</question>
+    <answer>gitlab_list_merge_requests</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Show me the description and branches of merge request !42.</question>
+    <answer>gitlab_get_merge_request</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>What files did merge request !42 change, with diffs?</question>
+    <answer>gitlab_get_merge_request_changes</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Open a merge request from feature/login into master with title "feat: login".</question>
+    <answer>gitlab_create_merge_request</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Merge MR !42 into master.</question>
+    <answer>gitlab_merge_mr</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Show me the contents of .gitlab-ci.yml on master.</question>
+    <answer>gitlab_get_file</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>List all files under src/ on the release-1.2 branch.</question>
+    <answer>gitlab_list_repository_tree</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>What commits are on release/1.5 that aren't on master?</question>
+    <answer>gitlab_compare_branches</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Give me the project ID, visibility, and default branch of this repo.</question>
+    <answer>gitlab_project_info</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Show me branches that have "release" in their name.</question>
+    <answer>gitlab_list_branches</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>What was the most recently shipped version tag?</question>
+    <answer>gitlab_list_tags</answer>
+  </qa_pair>
+
+</evaluation>
