@@ -6,9 +6,17 @@ Python, [FastMCP](https://github.com/modelcontextprotocol/python-sdk), stdio tra
 
 Works with any GitLab — SaaS `gitlab.com` or self-hosted / on-prem. Designed with corporate networks in mind: configurable `NO_PROXY` handling, optional SSL-verify toggle, per-project scoping via env vars.
 
+## Design highlights
+
+- **Tool annotations** — every tool carries `readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint` so MCP clients can classify operations (e.g. ask for confirmation only on destructive ones like `gitlab_merge_mr`, `gitlab_delete_schedule`).
+- **Dual response format** — `response_format='markdown'` (default) returns a compact table tuned for agent context; `response_format='json'` returns the raw structure.
+- **Structured errors** — authentication, 404, 403, rate-limit, missing-env errors are converted to actionable messages (e.g. _"GitLab authentication failed… verify GITLAB_TOKEN has `api` scope"_) instead of raw tracebacks.
+- **Pydantic input validation** — every argument has typed constraints (ranges, lengths, literals) auto-exposed as JSON Schema.
+- **Project scoping per call** — every tool accepts an optional `project_path` that overrides `GITLAB_PROJECT_PATH` for cross-project queries.
+
 ## Features
 
-22 tools covering the everyday CI/CD surface:
+23 tools covering the everyday CI/CD surface:
 
 **Pipelines**
 `gitlab_list_pipelines` · `gitlab_get_pipeline` · `gitlab_get_pipeline_jobs` · `gitlab_get_job_log` · `gitlab_trigger_pipeline` · `gitlab_retry_pipeline` · `gitlab_cancel_pipeline` · `gitlab_pipeline_health`
