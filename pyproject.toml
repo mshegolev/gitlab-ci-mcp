@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gitlab-ci-mcp"
+version = "0.1.0"
+description = "MCP server for self-hosted GitLab — pipelines, schedules, branches, merge requests and repository files"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Mikhail Shchegolev" },
+]
+keywords = ["mcp", "gitlab", "ci-cd", "devops", "claude", "anthropic"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Version Control",
+]
+dependencies = [
+    "mcp>=1.2",
+    "python-gitlab>=4.0",
+    "urllib3>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+gitlab-ci-mcp = "gitlab_ci_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/mshegolev/gitlab-ci-mcp"
+Issues = "https://github.com/mshegolev/gitlab-ci-mcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gitlab_ci_mcp"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
