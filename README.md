@@ -129,6 +129,19 @@ Same idea — point the MCP config to `uvx --from gitlab-ci-mcp gitlab-ci-mcp` w
 покажи содержимое .gitlab-ci.yml из master
 ```
 
+## Rate limits & connection reuse
+
+GitLab enforces a per-user rate limit (typically 2000 req/h for the REST API,
+configurable by the admin — see your instance's `/admin/application_settings/network`).
+
+- The server caches one `python-gitlab` HTTP session **per `project_path`**, so
+  repeated tool calls against the same project reuse the connection and do not
+  re-authenticate each time.
+- List tools default to `per_page=20` to keep a single call within a small
+  number of API requests.
+- If you hit a `429 Too Many Requests`, the error handler returns an actionable
+  message — wait and try again with larger `per_page` or fewer calls.
+
 ## Self-hosted GitLab behind a corporate proxy
 
 When your laptop has a local HTTP proxy (e.g. `http://127.0.0.1:3128` for corp web access) but GitLab is on the intranet, the proxy intercepts and kills internal requests. Two options:

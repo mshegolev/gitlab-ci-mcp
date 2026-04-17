@@ -390,6 +390,10 @@ def gitlab_retry_pipeline(
     Creates new job runs (new history entries). Safe to call when the pipeline
     has at least one failed/canceled job; has no effect if everything already
     passed.
+
+    Examples:
+        - "Retry the failed jobs in pipeline 123" → ``pipeline_id=123``
+        - Don't use to rerun a successful pipeline — use ``gitlab_trigger_pipeline`` instead.
     """
     try:
         ci = _get_ci(project_path)
@@ -419,6 +423,11 @@ def gitlab_cancel_pipeline(
 
     Destructive for *in-progress* work. Cancelling an already-finished pipeline
     is a no-op.
+
+    Examples:
+        - "Pipeline 123 is stuck, cancel it" → ``pipeline_id=123``
+        - Don't use on finished pipelines — no effect; use ``gitlab_retry_pipeline``
+          if you want to rerun it.
     """
     try:
         ci = _get_ci(project_path)
@@ -516,6 +525,11 @@ def gitlab_list_schedules(
 
     Variables whose key contains ``TOKEN`` or ``PASSWORD`` are returned without
     their values as a safety measure.
+
+    Examples:
+        - "What schedules do we have and are they all active" → default call
+        - Don't use to *run* a schedule now — use ``gitlab_trigger_pipeline``
+          with the schedule's variables instead.
     """
     try:
         ci = _get_ci(project_path)
@@ -579,6 +593,12 @@ def gitlab_create_schedule(
 
     **Not idempotent**: duplicate calls create duplicate schedules with
     auto-incrementing IDs.
+
+    Examples:
+        - "Schedule a nightly build on master at 02:00 Europe/Berlin" →
+          ``description='Nightly build'``, ``cron='0 2 * * *'``, ``ref='master'``,
+          ``timezone='Europe/Berlin'``, ``variables={'NIGHTLY': '1'}``
+        - Don't use to update existing schedules — use ``gitlab_update_schedule``.
     """
     try:
         ci = _get_ci(project_path)
@@ -636,6 +656,11 @@ def gitlab_update_schedule(
 
     Destructive when ``variables`` is set: the entire variable set is replaced,
     so ensure the caller sends a full list.
+
+    Examples:
+        - "Deactivate schedule 42" → ``schedule_id=42``, ``active=False``
+        - "Change cron of schedule 42 to hourly" → ``schedule_id=42``, ``cron='0 * * * *'``
+        - Don't pass ``variables`` unless you want to *replace* them entirely.
     """
     try:
         ci = _get_ci(project_path)
@@ -666,7 +691,13 @@ def gitlab_delete_schedule(
     schedule_id: Annotated[int, Field(description="Schedule ID to delete.", gt=0)],
     project_path: ProjectPath = None,
 ) -> str:
-    """Delete a schedule by ID. Cannot be undone."""
+    """Delete a schedule by ID. Cannot be undone.
+
+    Examples:
+        - "Delete schedule 42" → ``schedule_id=42``
+        - If you only want to pause it temporarily, call ``gitlab_update_schedule``
+          with ``active=False`` instead.
+    """
     try:
         ci = _get_ci(project_path)
         ci.delete_schedule(schedule_id)
@@ -880,6 +911,10 @@ def gitlab_get_merge_request(
 
     Includes state, branches, author, assignees, reviewers, labels, conflict
     status, description and timestamps.
+
+    Examples:
+        - "Show me the description and state of !42" → ``mr_iid=42``
+        - Don't use to see changed files — use ``gitlab_get_merge_request_changes``.
     """
     try:
         ci = _get_ci(project_path)
@@ -928,6 +963,11 @@ def gitlab_get_merge_request_changes(
     Useful for code-review-style queries ("what changed in !42?"). Diffs beyond
     2KB are truncated — fetch the raw file via ``gitlab_get_file`` for full
     content.
+
+    Examples:
+        - "What did MR !42 change" → ``mr_iid=42``
+        - If you need full content of a changed file, use ``gitlab_get_file``
+          with the MR's source branch.
     """
     try:
         ci = _get_ci(project_path)
@@ -984,6 +1024,11 @@ def gitlab_create_merge_request(
 
     **Not idempotent**: creates a new MR each call. Check existing MRs first
     via ``gitlab_list_merge_requests`` if you want to avoid duplicates.
+
+    Examples:
+        - "Open an MR from feature/login to master" → ``source_branch='feature/login'``
+        - "Open a WIP MR with a label" → ``title='Draft: ...'``, ``labels=['wip']``
+        - Don't use to merge an already-open MR — use ``gitlab_merge_mr``.
     """
     try:
         ci = _get_ci(project_path)
@@ -1239,7 +1284,12 @@ def gitlab_project_info(
     project_path: ProjectPath = None,
     response_format: ResponseFormatParam = ResponseFormat.MARKDOWN,
 ) -> str:
-    """Return basic metadata about a project: ID, default branch, visibility, counts."""
+    """Return basic metadata about a project: ID, default branch, visibility, counts.
+
+    Examples:
+        - "What's the project ID and default branch" → default call
+        - "Is this repo public or private" → look at ``visibility``
+    """
     try:
         ci = _get_ci(project_path)
         p = ci.project
