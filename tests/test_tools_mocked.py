@@ -2,18 +2,18 @@
 
 These tests stub out the GitLab REST API via ``responses`` so they do not need
 network access or a real GitLab instance. They guard against regressions where
-a ``python-gitlab`` upgrade silently changes the shape of returned objects or
-where a tool accidentally returns raw ``dict`` instead of a serialised string.
+a ``python-gitlab`` upgrade silently changes the shape of returned objects, or
+where a tool's structured content diverges from its declared ``outputSchema``.
 """
 
 from __future__ import annotations
 
-import json
-import os
 import urllib.parse
 
 import pytest
 import responses
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import CallToolResult
 
 GITLAB_URL = "https://gitlab.example.com"
 PROJECT_PATH = "demo/repo"
@@ -29,9 +29,9 @@ def _env(monkeypatch):
     monkeypatch.setenv("GITLAB_PROJECT_PATH", PROJECT_PATH)
     monkeypatch.setenv("GITLAB_SSL_VERIFY", "false")
     # Import late so env is applied before module init code runs.
-    from gitlab_ci_mcp import server
+    from gitlab_ci_mcp import _mcp
 
-    server._managers.clear()
+    _mcp._managers.clear()
 
 
 def _mock_project(rsp: responses.RequestsMock) -> None:
@@ -54,9 +54,22 @@ def _mock_project(rsp: responses.RequestsMock) -> None:
     )
 
 
+def _structured(result: CallToolResult) -> dict:
+    """Extract structuredContent — asserts the tool returned a proper result."""
+    assert isinstance(result, CallToolResult), f"expected CallToolResult, got {type(result).__name__}"
+    assert result.structuredContent is not None, "tool must populate structuredContent"
+    return dict(result.structuredContent)
+
+
+def _markdown(result: CallToolResult) -> str:
+    """Concatenate all text content blocks — the markdown rendering."""
+    assert isinstance(result, CallToolResult)
+    return "\n".join(c.text for c in result.content if getattr(c, "type", None) == "text")
+
+
 @responses.activate
-def test_list_pipelines_json_happy_path() -> None:
-    from gitlab_ci_mcp.server import ResponseFormat, gitlab_list_pipelines
+def test_list_pipelines_structured_and_markdown() -> None:
+    from gitlab_ci_mcp.tools.pipelines import gitlab_list_pipelines
 
     _mock_project(responses)
     responses.add(
@@ -91,19 +104,25 @@ def test_list_pipelines_json_happy_path() -> None:
         },
     )
 
-    out = gitlab_list_pipelines(response_format=ResponseFormat.JSON)
-    data = json.loads(out)
+    result = gitlab_list_pipelines()
 
+    # structuredContent exposes the typed payload
+    data = _structured(result)
     assert data["project"] == PROJECT_PATH
     assert data["count"] == 2
     assert data["pagination"]["has_more"] is False
     assert {p["id"] for p in data["pipelines"]} == {100, 99}
     assert data["pipelines"][0]["status"] == "success"
 
+    # content block carries a readable markdown summary
+    md = _markdown(result)
+    assert "| ID |" in md
+    assert "master" in md
+
 
 @responses.activate
-def test_list_pipelines_markdown_has_table_and_pagination_footer() -> None:
-    from gitlab_ci_mcp.server import gitlab_list_pipelines
+def test_list_pipelines_markdown_has_pagination_footer() -> None:
+    from gitlab_ci_mcp.tools.pipelines import gitlab_list_pipelines
 
     _mock_project(responses)
     responses.add(
@@ -123,18 +142,15 @@ def test_list_pipelines_markdown_has_table_and_pagination_footer() -> None:
         headers={"X-Total": "97", "X-Total-Pages": "5", "X-Page": "1", "X-Next-Page": "2", "X-Per-Page": "20"},
     )
 
-    out = gitlab_list_pipelines()  # default markdown
-
-    assert "| ID |" in out
-    assert "| 100 |" in out or "[100]" in out
-    assert "master" in out
-    # pagination footer shows next-page hint
-    assert "page=" in out.lower() or "total" in out.lower()
+    md = _markdown(gitlab_list_pipelines())
+    assert "| ID |" in md
+    assert "master" in md
+    assert "page=" in md.lower() or "total" in md.lower()
 
 
 @responses.activate
 def test_get_pipeline_happy_path() -> None:
-    from gitlab_ci_mcp.server import ResponseFormat, gitlab_get_pipeline
+    from gitlab_ci_mcp.tools.pipelines import gitlab_get_pipeline
 
     _mock_project(responses)
     responses.add(
@@ -155,16 +171,15 @@ def test_get_pipeline_happy_path() -> None:
         },
     )
 
-    out = gitlab_get_pipeline(pipeline_id=100, response_format=ResponseFormat.JSON)
-    data = json.loads(out)
+    data = _structured(gitlab_get_pipeline(pipeline_id=100))
     assert data["id"] == 100
     assert data["queued_duration"] == 10
     assert data["finished_at"] == "2026-04-17 10:02:00"
 
 
 @responses.activate
-def test_list_pipelines_401_returns_actionable_error() -> None:
-    from gitlab_ci_mcp.server import gitlab_list_pipelines
+def test_list_pipelines_401_raises_actionable_error() -> None:
+    from gitlab_ci_mcp.tools.pipelines import gitlab_list_pipelines
 
     _mock_project(responses)
     responses.add(
@@ -174,16 +189,17 @@ def test_list_pipelines_401_returns_actionable_error() -> None:
         status=401,
     )
 
-    out = gitlab_list_pipelines()
+    with pytest.raises(ToolError) as excinfo:
+        gitlab_list_pipelines()
 
-    assert out.startswith("Error")
-    assert "GITLAB_TOKEN" in out or "api" in out.lower()
-    assert "listing pipelines" in out
+    msg = str(excinfo.value)
+    assert "GITLAB_TOKEN" in msg or "api" in msg.lower()
+    assert "listing pipelines" in msg
 
 
 @responses.activate
-def test_get_pipeline_404_returns_actionable_error() -> None:
-    from gitlab_ci_mcp.server import gitlab_get_pipeline
+def test_get_pipeline_404_raises_actionable_error() -> None:
+    from gitlab_ci_mcp.tools.pipelines import gitlab_get_pipeline
 
     _mock_project(responses)
     responses.add(
@@ -193,38 +209,44 @@ def test_get_pipeline_404_returns_actionable_error() -> None:
         status=404,
     )
 
-    out = gitlab_get_pipeline(pipeline_id=9999)
+    with pytest.raises(ToolError) as excinfo:
+        gitlab_get_pipeline(pipeline_id=9999)
 
-    assert out.startswith("Error")
-    assert "404" in out
-    assert "9999" in out
+    msg = str(excinfo.value)
+    assert "404" in msg
+    assert "9999" in msg
 
 
 @responses.activate
 def test_project_info_markdown_contains_key_fields() -> None:
-    from gitlab_ci_mcp.server import gitlab_project_info
+    from gitlab_ci_mcp.tools.repo import gitlab_project_info
 
     _mock_project(responses)
 
-    out = gitlab_project_info()
+    result = gitlab_project_info()
+    data = _structured(result)
+    assert data["path_with_namespace"] == PROJECT_PATH
+    assert data["default_branch"] == "master"
 
-    assert PROJECT_PATH in out
-    assert "Default branch" in out
-    assert "master" in out
-    assert "visibility" in out.lower()
+    md = _markdown(result)
+    assert PROJECT_PATH in md
+    assert "Default branch" in md
+    assert "master" in md
+    assert "visibility" in md.lower()
 
 
-def test_missing_env_config_returns_actionable_error(monkeypatch) -> None:
-    """When required env vars are absent, the tool must return an error message,
-    not raise."""
-    from gitlab_ci_mcp import server
+def test_missing_env_config_raises_actionable_error(monkeypatch) -> None:
+    """When required env vars are absent, the tool must raise ToolError with an
+    actionable message, not a raw traceback."""
+    from gitlab_ci_mcp import _mcp
+    from gitlab_ci_mcp.tools.pipelines import gitlab_list_pipelines
 
-    # Drop required config and clear the cache so next call attempts fresh init.
     for v in ("GITLAB_URL", "GITLAB_TOKEN", "GITLAB_PROJECT_PATH"):
         monkeypatch.delenv(v, raising=False)
-    os.environ.pop(v, None)
-    server._managers.clear()
+    _mcp._managers.clear()
 
-    out = server.gitlab_list_pipelines()
-    assert out.startswith("Error")
-    assert "GITLAB" in out
+    with pytest.raises(ToolError) as excinfo:
+        gitlab_list_pipelines()
+
+    msg = str(excinfo.value)
+    assert "GITLAB" in msg

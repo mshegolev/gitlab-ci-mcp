@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Tool-picking evaluations for gitlab-ci-mcp.
-  Each qa_pair asks the agent to pick the right tool. Answer = tool name.
-  Verifiable by string match on the tool the agent actually invokes.
+
+  IMPORTANT — this file is ROUTING-STYLE, not execution-style: every question
+  asks which tool the agent should pick. The answer is always a tool name (or
+  a comma-separated set of tool names for multi-hop questions). A harness
+  running these evaluations MUST NOT actually execute destructive tools; it
+  should capture the tool name the agent intends to call and score by string
+  match. Questions that reference destructive ops (trigger/cancel/retry/
+  delete/create/merge/update) are therefore phrased "Which tool should you
+  call to …" to make the read-only routing intent explicit.
 -->
 <evaluation>
 
@@ -32,17 +39,17 @@
   </qa_pair>
 
   <qa_pair>
-    <question>Kick off a new pipeline on master with DEBUG=1.</question>
+    <question>Which tool should you call to kick off a new pipeline on master with DEBUG=1?</question>
     <answer>gitlab_trigger_pipeline</answer>
   </qa_pair>
 
   <qa_pair>
-    <question>Retry the failed jobs in pipeline 12345.</question>
+    <question>Which tool should you call to retry the failed jobs in pipeline 12345?</question>
     <answer>gitlab_retry_pipeline</answer>
   </qa_pair>
 
   <qa_pair>
-    <question>Cancel pipeline 12345, it's stuck.</question>
+    <question>Which tool should you call to cancel pipeline 12345 because it is stuck?</question>
     <answer>gitlab_cancel_pipeline</answer>
   </qa_pair>
 
@@ -52,12 +59,12 @@
   </qa_pair>
 
   <qa_pair>
-    <question>Delete the broken schedule with ID 42.</question>
+    <question>Which tool should you call to delete the broken schedule with ID 42?</question>
     <answer>gitlab_delete_schedule</answer>
   </qa_pair>
 
   <qa_pair>
-    <question>Add a new schedule that runs the build every night at 02:00 Europe/Berlin.</question>
+    <question>Which tool should you call to add a new schedule that runs the build every night at 02:00 Europe/Berlin?</question>
     <answer>gitlab_create_schedule</answer>
   </qa_pair>
 
@@ -77,12 +84,12 @@
   </qa_pair>
 
   <qa_pair>
-    <question>Open a merge request from feature/login into master with title "feat: login".</question>
+    <question>Which tool should you call to open a merge request from feature/login into master with title "feat: login"?</question>
     <answer>gitlab_create_merge_request</answer>
   </qa_pair>
 
   <qa_pair>
-    <question>Merge MR !42 into master.</question>
+    <question>Which tool should you call to merge MR !42 into master?</question>
     <answer>gitlab_merge_mr</answer>
   </qa_pair>
 
@@ -114,6 +121,47 @@
   <qa_pair>
     <question>What was the most recently shipped version tag?</question>
     <answer>gitlab_list_tags</answer>
+  </qa_pair>
+
+  <!--
+    Multi-tool composition questions. Answers are the *set* of tools an agent
+    should call (order-insensitive, comma-separated). A runner should treat
+    the expected answer as a set and check subset-of-invoked-tools.
+  -->
+
+  <qa_pair>
+    <question>The last pipeline on master failed — which specific job broke and what's the last 50 lines of its log?</question>
+    <answer>gitlab_list_pipelines, gitlab_get_pipeline_jobs, gitlab_get_job_log</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Open MR !42 — summarise what changed and show me the .gitlab-ci.yml from its source branch.</question>
+    <answer>gitlab_get_merge_request, gitlab_get_merge_request_changes, gitlab_get_file</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>What's in the latest release tag's .gitlab-ci.yml?</question>
+    <answer>gitlab_list_tags, gitlab_get_file</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Grep job 98765's log for any Traceback and give me 5 lines of context around each hit.</question>
+    <answer>gitlab_get_job_log</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Find every Traceback in the failing job of the latest master pipeline.</question>
+    <answer>gitlab_list_pipelines, gitlab_get_pipeline_jobs, gitlab_get_job_log</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Is master healthy over 7 days, and if not, which pipeline's failed job's log should I look at?</question>
+    <answer>gitlab_pipeline_health, gitlab_list_pipelines, gitlab_get_pipeline_jobs, gitlab_get_job_log</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>What commits are on release/1.5 that master doesn't have, and which of them changed .gitlab-ci.yml?</question>
+    <answer>gitlab_compare_branches</answer>
   </qa_pair>
 
 </evaluation>

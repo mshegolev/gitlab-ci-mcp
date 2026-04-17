@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import gitlab
@@ -34,16 +33,6 @@ class ScheduleInfo:
     variables: dict[str, str]
     next_run_at: str | None
     web_url: str
-
-
-@dataclass
-class ScheduleCompareResult:
-    missing: list[dict[str, Any]] = field(default_factory=list)
-    extra: list[ScheduleInfo] = field(default_factory=list)
-    mismatched: list[dict[str, Any]] = field(default_factory=list)
-
-    def has_differences(self) -> bool:
-        return bool(self.missing or self.extra or self.mismatched)
 
 
 class GitLabCIManager:
@@ -146,17 +135,6 @@ class GitLabCIManager:
 
     def get_pipeline_status(self, pipeline_id: int) -> str:
         return self.project.pipelines.get(pipeline_id).status
-
-    def wait_for_pipeline(self, pipeline_id: int, timeout: int = 3600, interval: int = 30) -> str:
-        pipeline = self.project.pipelines.get(pipeline_id)
-        start = time.time()
-        while pipeline.status in ("running", "pending", "created"):
-            if time.time() - start > timeout:
-                logger.warning("Pipeline %s timed out after %ss", pipeline_id, timeout)
-                break
-            time.sleep(interval)
-            pipeline.refresh()
-        return pipeline.status
 
     def get_pipeline_jobs(self, pipeline_id: int) -> list[dict[str, Any]]:
         pipeline = self.project.pipelines.get(pipeline_id)

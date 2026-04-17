@@ -88,10 +88,15 @@ def pipeline_jobs(d: dict) -> str:
 
 
 def job_log(d: dict) -> str:
-    return (
-        f"# Job `{d['job_id']}` log — last {d['showing_last']} of {d['total_lines']} lines\n\n"
-        f"```\n{d['log']}\n```"
-    )
+    if d.get("grep_pattern"):
+        header = (
+            f"# Job `{d['job_id']}` log — `grep {d['grep_pattern']!r}` "
+            f"→ {d.get('grep_matches', 0)} match(es), {d['showing_last']} line(s) shown "
+            f"out of {d['total_lines']}"
+        )
+    else:
+        header = f"# Job `{d['job_id']}` log — last {d['showing_last']} of {d['total_lines']} lines"
+    return f"{header}\n\n```\n{d['log']}\n```"
 
 
 def pipeline_health(d: dict) -> str:

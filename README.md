@@ -9,14 +9,15 @@ Works with any GitLab — SaaS `gitlab.com` or self-hosted / on-prem. Designed w
 ## Design highlights
 
 - **Tool annotations** — every tool carries `readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint` so MCP clients can classify operations (e.g. ask for confirmation only on destructive ones like `gitlab_merge_mr`, `gitlab_delete_schedule`).
-- **Dual response format** — `response_format='markdown'` (default) returns a compact table tuned for agent context; `response_format='json'` returns the raw structure.
-- **Structured errors** — authentication, 404, 403, rate-limit, missing-env errors are converted to actionable messages (e.g. _"GitLab authentication failed… verify GITLAB_TOKEN has `api` scope"_) instead of raw tracebacks.
+- **Structured output on every tool** — each tool declares a TypedDict return type, so FastMCP auto-generates an `outputSchema` and every result carries `structuredContent` alongside a pre-rendered markdown text block. Clients that can render structured data use it; agents that prefer compact text get the markdown. No `response_format` parameter needed.
+- **Structured errors** — authentication, 404, 403, 429 (rate-limit), 5xx, missing-env errors are converted to actionable `ToolError` messages (e.g. _"GitLab authentication failed… verify GITLAB_TOKEN has `api` scope"_) and surfaced as `isError=True` results.
 - **Pydantic input validation** — every argument has typed constraints (ranges, lengths, literals) auto-exposed as JSON Schema.
 - **Project scoping per call** — every tool accepts an optional `project_path` that overrides `GITLAB_PROJECT_PATH` for cross-project queries.
 - **Pagination** — list tools return a `pagination` block with `page`, `total`, `has_more`, `next_page` and a next-page hint in the markdown footer.
 - **MCP Context integration** — `gitlab_pipeline_health` and `gitlab_get_job_log` are `async` and emit `info` logs / `report_progress` events through the MCP Context so clients can show progress bars.
 - **MCP Resources** — `gitlab://project/info` and `gitlab://project/ci-config` mirror common lookups for clients that prefer the Resource model over tools.
 - **Lifespan management** — `python-gitlab` HTTP sessions are closed cleanly on server shutdown via an `asynccontextmanager` lifespan hook.
+- **Log grep** — `gitlab_get_job_log` accepts `grep_pattern` + `grep_context` (surrounding lines) for regex-filtering megabyte-scale CI logs without pulling the whole trace into agent context.
 
 ### Threading model
 

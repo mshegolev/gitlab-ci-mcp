@@ -3,6 +3,91 @@
 All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use [SemVer](https://semver.org/).
 
+## [0.5.0] — 2026-04-17
+
+**Big one.** Every tool is now a fully typed MCP citizen: ``outputSchema``,
+``structuredContent``, and the markdown text block you liked are now all
+present on every response.
+
+### Added
+- **TypedDict output schemas** for all 23 tools (new ``models.py``) —
+  FastMCP auto-generates an ``outputSchema`` from the return annotation
+  and exposes the typed payload as ``structuredContent`` on every tool
+  result.
+- **Dual-channel responses via ``CallToolResult``** — the ``content``
+  block still carries the compact markdown rendering (context-efficient
+  for agents), while ``structuredContent`` carries the full validated
+  payload (for clients that can render / process structured data).
+- New ``output.py`` with ``ok()`` (builds the ``CallToolResult``) and
+  ``fail()`` (raises ``ToolError`` wrapping the actionable error
+  message). All 23 tools share this pattern.
+
+### Changed
+- **Server split into domain modules**: the 1500-line ``server.py`` is
+  now a thin composition point; tools live under ``tools/``
+  (``pipelines.py``, ``schedules.py``, ``branches_tags.py``, ``mrs.py``,
+  ``repo.py``), MCP resources in ``resources.py``, and shared FastMCP
+  instance + lifespan + helpers in ``_mcp.py``.
+- Shared helpers ``_get_ci`` / ``_ts`` / ``_is_secret_key`` /
+  ``_mask_variables`` renamed without the leading underscore and moved
+  to ``_mcp`` (they are no longer single-module private).
+- Error path is now uniform: tools raise ``ToolError(errors.handle(…))``
+  and FastMCP reports the result as ``isError=True`` — no more
+  string-based error returns.
+
+### Removed
+- **``response_format`` parameter** (breaking): no longer needed because
+  every tool now returns *both* markdown and structured data. Existing
+  callers that passed ``response_format='markdown'`` or ``'json'`` must
+  drop the argument — markdown remains the text content by default,
+  structured data is on ``result.structuredContent``.
+- Dead code from ``ci_manager.py``: ``wait_for_pipeline``,
+  ``ScheduleCompareResult`` (unused from the MCP path).
+
+### Migration notes (v0.4.x → v0.5.0)
+- Tools no longer return plain strings. If you call them programmatically,
+  inspect ``result.structuredContent`` for the typed payload and
+  ``result.content[0].text`` for the markdown summary.
+- Module imports moved: ``from gitlab_ci_mcp.server import mcp`` still
+  works, but tool functions now live under ``gitlab_ci_mcp.tools.*``.
+
+## [0.4.2] — 2026-04-17
+
+### Changed
+- `warnings.filterwarnings("ignore")` and `urllib3.disable_warnings()` now
+  target **only** `urllib3.exceptions.InsecureRequestWarning` so future
+  deprecation / runtime warnings from any library still surface.
+- `evaluations/questions.xml` — destructive-op questions (trigger / cancel /
+  retry / delete / create / merge) reframed as "Which tool should you call
+  to …?" to make the routing-only evaluation intent unambiguous. Added a
+  top-of-file comment stating harnesses must capture tool names, not execute
+  the tools.
+
+## [0.4.1] — 2026-04-17
+
+### Added
+- `gitlab_get_job_log` — new `grep_pattern` + `grep_context` parameters for
+  regex-filtering large CI logs with surrounding context instead of blindly
+  tailing. Falls back to literal substring on invalid regex.
+- `errors.handle` — explicit branches for HTTP 429 (rate-limit with wait/retry
+  guidance) and 5xx (transient server error, retry hint), applied uniformly
+  across Get/Create/Update/Delete exceptions.
+- Tests for 429 / 5xx error paths, secret-masking helper, and job-log grep
+  parameters.
+
+### Changed
+- `gitlab_list_schedules` — expanded secret redaction from `TOKEN`/`PASSWORD`
+  to also match `SECRET`, `CREDENTIAL`, `PRIVATE_KEY`, `API_KEY`. Now *masks
+  values* (`"***"`) instead of dropping keys, so the agent can still see which
+  variables exist on a schedule.
+- `evaluations/questions.xml` — added 7 multi-tool composition questions on
+  top of the 22 tool-picking ones.
+
+### Fixed
+- `tests/test_tools_mocked.py` — removed a leftover `os.environ.pop(v, None)`
+  that used the loop variable outside its scope (redundant with
+  `monkeypatch.delenv`).
+
 ## [0.4.0] — 2026-04-17
 
 ### Added

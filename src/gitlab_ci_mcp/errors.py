@@ -5,6 +5,23 @@ from __future__ import annotations
 import gitlab.exceptions as gle
 
 
+def _rate_limited(action: str) -> str:
+    return (
+        f"Error: rate-limited (HTTP 429) while {action}. "
+        "GitLab is throttling requests — wait ~60s before retrying, reduce "
+        "`per_page`, or make fewer calls. See your instance's "
+        "`/admin/application_settings/network` for the per-user hourly limit."
+    )
+
+
+def _server_error(code: int, action: str, exc: Exception) -> str:
+    return (
+        f"Error: GitLab server error (HTTP {code}) while {action}. "
+        f"The server reported: {getattr(exc, 'error_message', exc)}. "
+        "This is usually transient — retry in a few seconds."
+    )
+
+
 def handle(exc: Exception, action: str) -> str:
     """Convert an exception raised while performing ``action`` into an
     LLM-readable string with a suggested next step.
@@ -18,8 +35,17 @@ def handle(exc: Exception, action: str) -> str:
             "Verify that `GITLAB_TOKEN` is set, not expired, and has the `api` scope. "
             f"Server response: {exc}"
         )
+
+    # Rate-limit and 5xx are shared across Get/Create/Update/Delete, so check
+    # the response_code up front (available on all GitlabError subclasses that
+    # carry an HTTP response).
+    code = getattr(exc, "response_code", None) if isinstance(exc, gle.GitlabError) else None
+    if code == 429:
+        return _rate_limited(action)
+    if isinstance(code, int) and 500 <= code < 600:
+        return _server_error(code, action, exc)
+
     if isinstance(exc, gle.GitlabGetError):
-        code = getattr(exc, "response_code", None)
         if code == 404:
             return (
                 f"Error: resource not found (HTTP 404) while {action}. "
