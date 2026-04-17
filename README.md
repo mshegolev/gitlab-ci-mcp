@@ -86,6 +86,10 @@ Every tool accepts an optional `project_path` arg that overrides `GITLAB_PROJECT
 
 ## Claude Code
 
+**Full walkthrough:** [docs/claude-code.md](docs/claude-code.md) — prerequisites, two install paths, multi-project setup, self-hosted GitLab behind a corp proxy, troubleshooting, uninstall.
+
+Short version:
+
 ```bash
 claude mcp add gitlab uvx --from gitlab-ci-mcp gitlab-ci-mcp \
   --env GITLAB_URL=https://gitlab.example.com \
