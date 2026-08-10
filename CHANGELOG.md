@@ -3,6 +3,29 @@
 All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **CI actually runs the tests.** New `.github/workflows/test.yml` (pytest +
+  `ruff check` on Python 3.10/3.11/3.12, on every push and PR to `main`). Until
+  now the only workflow was `publish.yml`, which builds and uploads on a `v*`
+  tag without ever invoking pytest or ruff — which is how 0.5.1 went out green
+  while one `mcp` release away from never starting. `ruff format --check` is
+  intentionally *not* in the workflow: it flags 5 files of pre-existing drift
+  from a newer ruff, and a gate that is red on day one gets disabled on day two.
+- **Entry-point smoke tests** (`tests/test_entrypoint.py`, 8 tests). Covers the
+  path a real MCP client walks and no other test touched: `console_scripts`
+  metadata → `gitlab_ci_mcp.server:main` → `mcp.run()` → stdio → clean exit on
+  EOF, plus protocol-level `list_tools()` / `list_resources()` and a check that
+  the server builds with no credentials in the environment. Offline; no GitLab,
+  no token. Verified mutationally: making `main()` fail at runtime leaves the
+  previous 21 tests and `ruff check` green and turns only these red.
+
+### Changed
+- `[tool.pytest.ini_options]` in `pyproject.toml` anchors pytest's rootdir at
+  the repo, so a stray `pytest.ini` in a parent directory can no longer inject
+  its `addopts` and break collection before a test runs.
+
 ## [0.5.2] — 2026-08-10
 
 ### Fixed

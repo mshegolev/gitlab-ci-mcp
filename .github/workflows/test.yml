@@ -1,0 +1,51 @@
+name: Run tests
+
+# Until now the only workflow here was publish.yml, which builds and uploads on
+# a v* tag without ever running pytest or ruff. That is how 0.5.1 shipped green
+# while sitting one `mcp` release away from never starting: `mcp` 2.0 removed
+# `mcp.server.fastmcp`, which every tool module imports. Nothing would have gone
+# red. This workflow is the gate that was missing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest + ruff
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package + dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+
+      - name: Lint with ruff
+        run: ruff check src tests
+
+      # NOTE: `ruff format --check` is deliberately absent. It currently flags 5
+      # files (formatters.py, tools/mrs.py, tools/pipelines.py, tools/repo.py,
+      # tests/test_smoke.py) — pre-existing drift from a newer ruff, not from any
+      # change here. Adding it would land a gate that is red on day one, and a
+      # gate that is red on day one gets switched off on day two. Reformat those
+      # files in a dedicated commit, then add the step.
+
+      - name: Run pytest
+        run: pytest -v
