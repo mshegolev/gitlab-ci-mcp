@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gitlab-ci-mcp"
-version = "0.5.1"
+version = "0.5.2"
 description = "MCP server for self-hosted GitLab — pipelines, schedules, branches, merge requests and repository files"
 readme = "README.md"
 license = { text = "MIT" }
@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Software Development :: Version Control",
 ]
 dependencies = [
-    "mcp>=1.2",
+    "mcp>=1.2,<2",
     "python-gitlab>=4.0",
     "urllib3>=2.0",
 ]

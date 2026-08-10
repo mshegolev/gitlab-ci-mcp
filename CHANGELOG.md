@@ -3,6 +3,19 @@
 All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use [SemVer](https://semver.org/).
 
+## [0.5.2] — 2026-08-10
+
+### Fixed
+- **Pin `mcp>=1.2,<2`.** `mcp 2.0` removed `mcp.server.fastmcp`, which this
+  server imports in six modules. Without an upper bound a clean
+  `pip install gitlab-ci-mcp` resolved `mcp 2.0` and the `gitlab-ci-mcp`
+  console script died on import with
+  `ModuleNotFoundError: No module named 'mcp.server.fastmcp'` — from an MCP
+  client this looked like an opaque transport failure, easy to misread as a
+  credentials or URL problem. Test collection failed for the same reason.
+- `__version__` in `gitlab_ci_mcp/__init__.py` was stuck at `0.5.0` and is now
+  back in sync with `pyproject.toml` and `server.json`.
+
 ## [0.5.1] — 2026-04-18
 
 ### Added
