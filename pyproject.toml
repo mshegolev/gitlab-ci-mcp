@@ -47,6 +47,13 @@ Issues = "https://github.com/mshegolev/gitlab-ci-mcp/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["src/gitlab_ci_mcp"]
 
+[tool.pytest.ini_options]
+# Anchors pytest's rootdir at this repo. Without a config section here, pytest
+# walks up and can adopt a stray pytest.ini from a parent directory (common on
+# dev machines with several checkouts under one tree), inheriting its addopts
+# and failing before a single test runs.
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"
