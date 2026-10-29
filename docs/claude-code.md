@@ -184,7 +184,7 @@ uvx --from gitlab-ci-mcp gitlab-ci-mcp
 Self-signed или корпоративный CA? Установите `GITLAB_SSL_VERIFY=false` в env
 сервера (для dev). Для prod — добавьте корпоративный CA в системный trust store.
 
-### Прокси режет запросы к `*.mts.ru` / `*.corp.*`
+### Прокси режет запросы к `*.example.com` / `*.corp.*`
 
 См. раздел **5. Self-hosted GitLab** выше — используйте `GITLAB_NO_PROXY_DOMAINS`.
 

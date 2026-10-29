@@ -5,6 +5,13 @@ All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-10-30
+
+_Docs-only release: no change under `src/` behaviour._
+
+### Changed
+- `docs/claude-code.md`: troubleshooting heading uses a generic `*.example.com` host instead of an internal domain.
+
 ## [0.5.3] — 2026-10-29
 
 _Housekeeping release: no change under `src/`; adds CI and tests only._
