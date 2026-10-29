@@ -5,6 +5,10 @@ All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-10-29
+
+_Housekeeping release: no change under `src/`; adds CI and tests only._
+
 ### Added
 - **CI actually runs the tests.** New `.github/workflows/test.yml` (pytest +
   `ruff check` on Python 3.10/3.11/3.12, on every push and PR to `main`). Until
