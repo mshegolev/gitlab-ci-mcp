@@ -202,9 +202,7 @@ def test_manager_cache_is_thread_safe_for_concurrent_same_pat(monkeypatch: pytes
             created.append(self)
 
     context = SimpleNamespace(
-        request_context=SimpleNamespace(
-            request=SimpleNamespace(headers={"x-gitlab-token": "same-user-token"})
-        )
+        request_context=SimpleNamespace(request=SimpleNamespace(headers={"x-gitlab-token": "same-user-token"}))
     )
     monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
     monkeypatch.setenv("GITLAB_URL", "https://gitlab.example.com")
@@ -267,9 +265,7 @@ def http_mcp_app():
     mcp._session_manager = None
 
 
-def test_http_app_rejects_unauthenticated_initialize_before_mcp(
-    monkeypatch: pytest.MonkeyPatch, http_mcp_app
-) -> None:
+def test_http_app_rejects_unauthenticated_initialize_before_mcp(monkeypatch: pytest.MonkeyPatch, http_mcp_app) -> None:
     import asyncio
 
     import httpx
@@ -419,7 +415,7 @@ def test_health_api_failure_reaches_mcp_as_named_error(monkeypatch) -> None:
             raise RuntimeError("GitLab unavailable")
 
     ci = SimpleNamespace(project_path="demo/repo", project=SimpleNamespace(pipelines=PipelineList()))
-    monkeypatch.setattr(pipelines, "get_ci", lambda _path: ci)
+    monkeypatch.setattr(pipelines, "get_ci", lambda _path, **_kwargs: ci)
 
     with pytest.raises(ToolError, match="pipeline health API request failed"):
         asyncio.run(pipelines.gitlab_pipeline_health(project_path="demo/repo"))
@@ -434,7 +430,7 @@ def test_health_mcp_tool_returns_structured_no_data_report(monkeypatch) -> None:
         project_path="demo/repo",
         project=SimpleNamespace(pipelines=SimpleNamespace(list=lambda **_kwargs: [])),
     )
-    monkeypatch.setattr(pipelines, "get_ci", lambda _path: ci)
+    monkeypatch.setattr(pipelines, "get_ci", lambda _path, **_kwargs: ci)
 
     result = asyncio.run(pipelines.gitlab_pipeline_health(project_path="demo/repo"))
 
@@ -544,13 +540,9 @@ def test_schedule_variable_read_error_names_schedule_and_phase() -> None:
         variables=SimpleNamespace(list=lambda **_kwargs: (_ for _ in ()).throw(OSError("offline"))),
     )
     project = SimpleNamespace(
-        pipelineschedules=SimpleNamespace(
-            list=lambda **_kwargs: [schedule], get=lambda _schedule_id: schedule
-        )
+        pipelineschedules=SimpleNamespace(list=lambda **_kwargs: [schedule], get=lambda _schedule_id: schedule)
     )
-    manager = SimpleNamespace(
-        project=project, gitlab_url="https://gitlab.example", project_path="demo/repo"
-    )
+    manager = SimpleNamespace(project=project, gitlab_url="https://gitlab.example", project_path="demo/repo")
 
     with pytest.raises(RuntimeError, match="schedule 44 variables read failed"):
         GitLabCIManager.list_schedules(manager)
@@ -579,9 +571,7 @@ def test_schedule_create_names_failed_rollback_without_echoing_variable_value() 
 
     schedule = SimpleNamespace(
         id=56,
-        variables=SimpleNamespace(
-            create=lambda _attrs: (_ for _ in ()).throw(OSError("SECRET_VALUE"))
-        ),
+        variables=SimpleNamespace(create=lambda _attrs: (_ for _ in ()).throw(OSError("SECRET_VALUE"))),
         delete=lambda: (_ for _ in ()).throw(OSError("delete failed")),
     )
     manager = SimpleNamespace(
@@ -605,6 +595,7 @@ def test_schedule_update_recreates_old_variables_after_write_failure() -> None:
         def list(self, **_kwargs):
             result = []
             for key, value in list(state["current"]):
+
                 def delete(key=key, value=value):
                     state["current"].remove((key, value))
 
@@ -638,6 +629,7 @@ def test_schedule_update_reports_failed_rollback_without_variable_values() -> No
         def list(self, **_kwargs):
             result = []
             for key, value in list(state["current"]):
+
                 def delete(key=key, value=value):
                     if key == "NEW":
                         raise OSError("cleanup failed")
@@ -695,7 +687,7 @@ def test_merge_request_reports_file_and_api_diff_truncation(monkeypatch) -> None
     change = {"old_path": "a", "new_path": "a", "diff": "x" * 2500}
     mr = SimpleNamespace(changes=lambda: {"changes": [change], "overflow": True, "changes_count": "150"})
     ci = SimpleNamespace(project=SimpleNamespace(mergerequests=SimpleNamespace(get=lambda _iid: mr)))
-    monkeypatch.setattr(mrs, "get_ci", lambda _path: ci)
+    monkeypatch.setattr(mrs, "get_ci", lambda _path, **_kwargs: ci)
 
     result = mrs.gitlab_get_merge_request_changes(mr_iid=3, project_path="demo/repo")
     data = dict(result.structuredContent)
@@ -711,7 +703,7 @@ def test_merge_request_does_not_treat_string_false_as_overflow(monkeypatch) -> N
 
     mr = SimpleNamespace(changes=lambda: {"changes": [], "overflow": "false", "changes_count": "2"})
     ci = SimpleNamespace(project=SimpleNamespace(mergerequests=SimpleNamespace(get=lambda _iid: mr)))
-    monkeypatch.setattr(mrs, "get_ci", lambda _path: ci)
+    monkeypatch.setattr(mrs, "get_ci", lambda _path, **_kwargs: ci)
 
     result = mrs.gitlab_get_merge_request_changes(mr_iid=3, project_path="demo/repo")
 
@@ -723,7 +715,7 @@ def test_merge_request_count_suffix_marks_overflow(monkeypatch) -> None:
 
     mr = SimpleNamespace(changes=lambda: {"changes": [], "changes_count": "1000+"})
     ci = SimpleNamespace(project=SimpleNamespace(mergerequests=SimpleNamespace(get=lambda _iid: mr)))
-    monkeypatch.setattr(mrs, "get_ci", lambda _path: ci)
+    monkeypatch.setattr(mrs, "get_ci", lambda _path, **_kwargs: ci)
 
     result = mrs.gitlab_get_merge_request_changes(mr_iid=3, project_path="demo/repo")
 
@@ -750,7 +742,7 @@ def test_branch_listing_applies_search_and_formats_commit(monkeypatch) -> None:
         project_path="demo/repo",
         project=SimpleNamespace(branches=SimpleNamespace(list=list_branches)),
     )
-    monkeypatch.setattr(branches_tags, "get_ci", lambda _path: ci)
+    monkeypatch.setattr(branches_tags, "get_ci", lambda _path, **_kwargs: ci)
 
     result = branches_tags.gitlab_list_branches(search="release", project_path="demo/repo")
 
@@ -770,7 +762,7 @@ def test_tag_listing_orders_and_formats_tags(monkeypatch) -> None:
         return [tag]
 
     ci = SimpleNamespace(project_path="demo/repo", project=SimpleNamespace(tags=SimpleNamespace(list=list_tags)))
-    monkeypatch.setattr(branches_tags, "get_ci", lambda _path: ci)
+    monkeypatch.setattr(branches_tags, "get_ci", lambda _path, **_kwargs: ci)
 
     result = branches_tags.gitlab_list_tags(search="v1", project_path="demo/repo")
 
@@ -785,7 +777,7 @@ def test_repository_file_is_limited_to_500_lines(monkeypatch) -> None:
     contents = "\n".join(f"line {i}" for i in range(510)).encode()
     file_obj = SimpleNamespace(decode=lambda: contents, size=len(contents))
     ci = SimpleNamespace(project=SimpleNamespace(files=SimpleNamespace(get=lambda **_kwargs: file_obj)))
-    monkeypatch.setattr(repo, "get_ci", lambda _path: ci)
+    monkeypatch.setattr(repo, "get_ci", lambda _path, **_kwargs: ci)
 
     result = repo.gitlab_get_file(file_path="README.md", project_path="demo/repo")
 
@@ -804,7 +796,7 @@ def test_repository_tree_passes_paging_and_renders_root(monkeypatch) -> None:
         return [{"name": "src", "type": "tree", "path": "src"}]
 
     ci = SimpleNamespace(project_path="demo/repo", project=SimpleNamespace(repository_tree=tree))
-    monkeypatch.setattr(repo, "get_ci", lambda _path: ci)
+    monkeypatch.setattr(repo, "get_ci", lambda _path, **_kwargs: ci)
 
     result = repo.gitlab_list_repository_tree(path="", project_path="demo/repo")
 
@@ -931,10 +923,8 @@ def test_job_log_tool_exposes_output_truncation(monkeypatch) -> None:
 
     from gitlab_ci_mcp.tools import pipelines
 
-    ci = SimpleNamespace(
-        get_job_log_bounded=lambda _job_id, _max_bytes: ("x" * 300_000, False, 300_000, 1)
-    )
-    monkeypatch.setattr(pipelines, "get_ci", lambda _path: ci)
+    ci = SimpleNamespace(get_job_log_bounded=lambda _job_id, _max_bytes: ("x" * 300_000, False, 300_000, 1))
+    monkeypatch.setattr(pipelines, "get_ci", lambda _path, **_kwargs: ci)
 
     result = asyncio.run(pipelines.gitlab_get_job_log(job_id=91, project_path="demo/repo"))
     data = dict(result.structuredContent)
@@ -1184,3 +1174,249 @@ def test_update_check_is_not_called_during_server_import() -> None:
         "import gitlab_ci_mcp.server"
     )
     subprocess.run([sys.executable, "-c", script], check=True, timeout=5)
+
+
+def test_http_gitlab_tool_receives_request_pat_context(monkeypatch: pytest.MonkeyPatch, http_mcp_app) -> None:
+    import asyncio
+
+    import httpx
+
+    from gitlab_ci_mcp.tools import pipelines
+
+    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setenv("MCP_GITLAB_UPDATE_CHECK_ENABLED", "false")
+    captured = []
+
+    class FakePipelines:
+        @staticmethod
+        def list(**_kwargs):
+            return []
+
+    manager = SimpleNamespace(project_path="demo/repo", project=SimpleNamespace(pipelines=FakePipelines()))
+
+    def fake_get_ci(project_path, *, ctx=None):
+        captured.append((project_path, ctx.request_context.request.headers.get("x-gitlab-token") if ctx else None))
+        return manager
+
+    monkeypatch.setattr(pipelines, "get_ci", fake_get_ci)
+
+    async def invoke_tool():
+        async with http_mcp_app.router.lifespan_context(http_mcp_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=http_mcp_app), base_url="http://127.0.0.1:8000"
+            ) as client:
+                headers = {
+                    "X-GitLab-Token": "pat-user-a",
+                    "Accept": "application/json, text/event-stream",
+                }
+                await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                            "clientInfo": {"name": "auth-test", "version": "1.0"},
+                        },
+                    },
+                    headers=headers,
+                )
+                return await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/call",
+                        "params": {"name": "gitlab_list_pipelines", "arguments": {"project_path": "demo/repo"}},
+                    },
+                    headers=headers,
+                )
+
+    response = asyncio.run(invoke_tool())
+
+    assert response.status_code == 200
+    assert captured == [("demo/repo", "pat-user-a")]
+
+
+def test_http_concurrent_users_keep_pat_scoped_to_each_tool_call(monkeypatch: pytest.MonkeyPatch, http_mcp_app) -> None:
+    import asyncio
+
+    import httpx
+
+    from gitlab_ci_mcp import _mcp
+
+    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setenv("GITLAB_ALLOW_DEFAULT_PROJECT", "false")
+    monkeypatch.setenv("MCP_GITLAB_UPDATE_CHECK_ENABLED", "false")
+    created = {}
+
+    class FakeManager:
+        def __init__(self, *, project_path: str, token: str) -> None:
+            self.project_path = project_path
+            self.token = token
+            created[token] = self
+            self.project = SimpleNamespace(pipelines=SimpleNamespace(list=self.list_pipelines))
+
+        def list_pipelines(self, **_kwargs):
+            if self.token == "pat-user-a":
+                return [
+                    SimpleNamespace(
+                        id=10,
+                        status="success",
+                        ref="main",
+                        source="push",
+                        created_at="2026-11-03T12:00:00Z",
+                        duration=5,
+                        web_url="https://gitlab.example/pipeline/10",
+                    )
+                ]
+            return []
+
+    monkeypatch.setattr(_mcp, "GitLabCIManager", FakeManager)
+    _mcp._managers.clear()
+
+    async def invoke_both():
+        async with http_mcp_app.router.lifespan_context(http_mcp_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=http_mcp_app), base_url="http://127.0.0.1:8000"
+            ) as client:
+                init_headers = {
+                    "X-GitLab-Token": "pat-user-a",
+                    "Accept": "application/json, text/event-stream",
+                }
+                await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                            "clientInfo": {"name": "auth-test", "version": "1.0"},
+                        },
+                    },
+                    headers=init_headers,
+                )
+
+                async def call(token: str, req_id: int):
+                    return await client.post(
+                        "/mcp",
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": req_id,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "gitlab_list_pipelines",
+                                "arguments": {"project_path": "demo/repo"},
+                            },
+                        },
+                        headers={**init_headers, "X-GitLab-Token": token},
+                    )
+
+                return await asyncio.gather(call("pat-user-a", 2), call("pat-user-b", 3))
+
+    response_a, response_b = asyncio.run(invoke_both())
+    assert response_a.status_code == response_b.status_code == 200
+    assert '"id":10' in response_a.text
+    assert '"id":10' not in response_b.text
+    assert created["pat-user-a"] is not created["pat-user-b"]
+    assert all(token not in response_a.text + response_b.text for token in created)
+
+
+def test_context_is_excluded_from_registered_schemas_and_resources_remain_static() -> None:
+    import asyncio
+
+    from gitlab_ci_mcp.server import mcp
+
+    async def inspect_registries():
+        tools = await mcp.list_tools()
+        resources = await mcp.list_resources()
+        templates = await mcp.list_resource_templates()
+        return tools, resources, templates
+
+    tools, resources, templates = asyncio.run(inspect_registries())
+    assert tools
+    assert all("ctx" not in tool.inputSchema.get("properties", {}) for tool in tools)
+    assert {str(resource.uri) for resource in resources} >= {"gitlab://project/info", "gitlab://project/ci-config"}
+    assert not templates
+
+
+def test_fixed_resources_fail_before_gitlab_access_without_legacy_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gitlab_ci_mcp import _mcp
+    from gitlab_ci_mcp.resources import project_info_resource
+
+    class ForbiddenGitLabManager:
+        def __init__(self, **_kwargs):
+            pytest.fail("GitLab must not be contacted when a fixed resource has no explicit project scope")
+
+    monkeypatch.delenv("GITLAB_ALLOW_DEFAULT_PROJECT", raising=False)
+    monkeypatch.setenv("MCP_TRANSPORT", "stdio")
+    monkeypatch.setenv("GITLAB_TOKEN", "stdio-token")
+    monkeypatch.setattr(_mcp, "GitLabCIManager", ForbiddenGitLabManager)
+
+    result = project_info_resource()
+
+    assert "project_path is required" in result
+
+
+def test_http_static_resource_uses_request_pat(monkeypatch: pytest.MonkeyPatch, http_mcp_app) -> None:
+    import asyncio
+
+    import httpx
+
+    from gitlab_ci_mcp import _mcp
+
+    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setenv("GITLAB_ALLOW_DEFAULT_PROJECT", "true")
+    monkeypatch.setenv("GITLAB_PROJECT_PATH", "demo/repo")
+    monkeypatch.setenv("MCP_GITLAB_UPDATE_CHECK_ENABLED", "false")
+    used_tokens = []
+
+    class FakeManager:
+        def __init__(self, *, project_path: str, token: str) -> None:
+            used_tokens.append(token)
+            self.project_path = project_path
+            self.project = SimpleNamespace(
+                id=3, name="repo", path_with_namespace="demo/repo", default_branch="main",
+                web_url="https://gitlab.example/demo/repo", visibility="private", created_at=None,
+                last_activity_at=None, open_issues_count=0, forks_count=0, star_count=0,
+            )
+
+    monkeypatch.setattr(_mcp, "GitLabCIManager", FakeManager)
+    _mcp._managers.clear()
+
+    async def read_resource():
+        async with http_mcp_app.router.lifespan_context(http_mcp_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=http_mcp_app), base_url="http://127.0.0.1:8000"
+            ) as client:
+                headers = {
+                    "X-GitLab-Token": "pat-resource-user",
+                    "Accept": "application/json, text/event-stream",
+                }
+                await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-06-18", "capabilities": {},
+                            "clientInfo": {"name": "auth-test", "version": "1.0"},
+                        },
+                    }, headers=headers,
+                )
+                return await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0", "id": 2, "method": "resources/read",
+                        "params": {"uri": "gitlab://project/info"},
+                    }, headers=headers,
+                )
+
+    response = asyncio.run(read_resource())
+
+    assert response.status_code == 200
+    assert "demo/repo" in response.text
+    assert used_tokens == ["pat-resource-user"]

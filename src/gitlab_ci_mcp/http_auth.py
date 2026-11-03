@@ -7,7 +7,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
-from gitlab_ci_mcp._mcp import mcp
+from gitlab_ci_mcp._mcp import _http_request_token, mcp
 
 
 class GitLabPATHeaderMiddleware(BaseHTTPMiddleware):
@@ -22,6 +22,11 @@ class GitLabPATHeaderMiddleware(BaseHTTPMiddleware):
             token = request.headers.get("x-gitlab-token")
             if not token or not token.strip():
                 return JSONResponse({"error": "X-GitLab-Token header is required"}, status_code=401)
+            token_context = _http_request_token.set(token.strip())
+            try:
+                return await call_next(request)
+            finally:
+                _http_request_token.reset(token_context)
         return await call_next(request)
 
 

@@ -73,14 +73,35 @@ def _bounded_log_output(lines: list[str], max_bytes: int = _MAX_JOB_LOG_OUTPUT_B
     tail = raw[-budget:] if budget else b""
     return tail.decode("utf-8", errors="replace") + marker.decode(), True
 
+
 PipelineStatus = Literal[
-    "created", "waiting_for_resource", "preparing", "pending", "running",
-    "success", "failed", "canceled", "skipped", "manual", "scheduled",
+    "created",
+    "waiting_for_resource",
+    "preparing",
+    "pending",
+    "running",
+    "success",
+    "failed",
+    "canceled",
+    "skipped",
+    "manual",
+    "scheduled",
 ]
 PipelineSource = Literal[
-    "push", "web", "trigger", "schedule", "api", "external", "pipeline",
-    "chat", "webide", "merge_request_event", "external_pull_request_event",
-    "parent_pipeline", "ondemand_dast_scan", "ondemand_dast_validation",
+    "push",
+    "web",
+    "trigger",
+    "schedule",
+    "api",
+    "external",
+    "pipeline",
+    "chat",
+    "webide",
+    "merge_request_event",
+    "external_pull_request_event",
+    "parent_pipeline",
+    "ondemand_dast_scan",
+    "ondemand_dast_validation",
 ]
 
 
@@ -100,15 +121,14 @@ def gitlab_list_pipelines(
         str | None,
         Field(default=None, description="Filter by branch or tag name (e.g. 'master').", max_length=255),
     ] = None,
-    status: Annotated[
-        PipelineStatus | None, Field(default=None, description="Filter by pipeline status.")
-    ] = None,
+    status: Annotated[PipelineStatus | None, Field(default=None, description="Filter by pipeline status.")] = None,
     source: Annotated[
         PipelineSource | None, Field(default=None, description="Filter by pipeline trigger source.")
     ] = None,
     per_page: Annotated[int, Field(default=20, ge=1, le=100, description="Items per page (1–100).")] = 20,
     page: Annotated[int, Field(default=1, ge=1, description="1-based page number.")] = 1,
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> PipelinesListOutput:
     """List recent pipelines of a project, newest first.
 
@@ -126,7 +146,7 @@ def gitlab_list_pipelines(
         - Don't use when you have a specific pipeline ID — use ``gitlab_get_pipeline`` instead.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         kwargs: dict[str, Any] = {"per_page": per_page, "page": page, "get_all": False}
         if ref:
             kwargs["ref"] = ref
@@ -172,6 +192,7 @@ def gitlab_list_pipelines(
 def gitlab_get_pipeline(
     pipeline_id: Annotated[int, Field(description="Numeric pipeline ID (not ``iid``).", gt=0)],
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> PipelineDetailOutput:
     """Get a single pipeline with full timing details.
 
@@ -184,7 +205,7 @@ def gitlab_get_pipeline(
         - Don't use to see individual jobs — use ``gitlab_get_pipeline_jobs``.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         p = ci.project.pipelines.get(pipeline_id)
         data: PipelineDetailOutput = {
             "id": p.id,
@@ -218,6 +239,7 @@ def gitlab_get_pipeline(
 def gitlab_get_pipeline_jobs(
     pipeline_id: Annotated[int, Field(description="Numeric pipeline ID.", gt=0)],
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> JobsListOutput:
     """List jobs of a pipeline with stage, status, duration and web URL.
 
@@ -230,7 +252,7 @@ def gitlab_get_pipeline_jobs(
         - Don't use for overall pipeline status — use ``gitlab_get_pipeline`` instead.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         jobs = ci.get_pipeline_jobs(pipeline_id)
         data: JobsListOutput = {"pipeline_id": pipeline_id, "jobs_count": len(jobs), "jobs": jobs}
         return output.ok(data, formatters.pipeline_jobs(data))  # type: ignore[return-value]
@@ -295,7 +317,7 @@ async def gitlab_get_job_log(
         if ctx:
             hint = f"grep={grep_pattern!r}" if grep_pattern else f"tail={tail}"
             await ctx.info(f"Fetching log of job {job_id} ({hint})")
-        ci = await asyncio.to_thread(get_ci, project_path)
+        ci = await asyncio.to_thread(get_ci, project_path, ctx=ctx)
         log, source_truncated, bytes_read, total = await asyncio.to_thread(
             ci.get_job_log_bounded, job_id, _MAX_JOB_LOG_BYTES
         )
@@ -367,6 +389,7 @@ def gitlab_trigger_pipeline(
         Field(default=None, description="Optional CI variables to pass to the pipeline (``{key: value}``)."),
     ] = None,
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> PipelineActionResult:
     """Create a new pipeline on the given ref, optionally with CI variables.
 
@@ -379,7 +402,7 @@ def gitlab_trigger_pipeline(
         - Don't call to retry — use ``gitlab_retry_pipeline`` which keeps the same pipeline ID.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         result = ci.trigger_pipeline(ref=ref, variables=variables)
         data: PipelineActionResult = {
             "pipeline_id": result.pipeline_id,
@@ -409,6 +432,7 @@ def gitlab_trigger_pipeline(
 def gitlab_retry_pipeline(
     pipeline_id: Annotated[int, Field(description="Pipeline ID to retry failed jobs for.", gt=0)],
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> PipelineActionResult:
     """Retry all failed jobs of an existing pipeline.
 
@@ -421,7 +445,7 @@ def gitlab_retry_pipeline(
         - Don't use to rerun a successful pipeline — use ``gitlab_trigger_pipeline`` instead.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         pipeline = ci.project.pipelines.get(pipeline_id)
         pipeline.retry()
         pipeline.refresh()
@@ -450,6 +474,7 @@ def gitlab_retry_pipeline(
 def gitlab_cancel_pipeline(
     pipeline_id: Annotated[int, Field(description="Pipeline ID to cancel.", gt=0)],
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> PipelineActionResult:
     """Cancel a running pipeline. In-flight jobs will be interrupted.
 
@@ -462,7 +487,7 @@ def gitlab_cancel_pipeline(
           if you want to rerun it.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         pipeline = ci.project.pipelines.get(pipeline_id)
         pipeline.cancel()
         pipeline.refresh()
@@ -518,7 +543,7 @@ async def gitlab_pipeline_health(
         if ctx:
             await ctx.info(f"Fetching 30 days of '{source}' pipelines on {ref}")
             await ctx.report_progress(0.1, total=1.0, message="connecting")
-        ci = await asyncio.to_thread(get_ci, project_path)
+        ci = await asyncio.to_thread(get_ci, project_path, ctx=ctx)
         if ctx:
             await ctx.report_progress(0.3, total=1.0, message="loading pipelines")
         report = await asyncio.to_thread(PipelineHealthCollector(ci).collect, ref, source)

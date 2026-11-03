@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
+from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from gitlab_ci_mcp import formatters, output, pagination
@@ -36,6 +37,7 @@ def gitlab_get_file(
         str, Field(default="master", description="Branch, tag or commit SHA.", min_length=1, max_length=255)
     ] = "master",
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> FileContentOutput:
     """Read a text file from the repository, truncated to 500 lines.
 
@@ -48,7 +50,7 @@ def gitlab_get_file(
         - Don't use for listings — use ``gitlab_list_repository_tree``.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         f = ci.project.files.get(file_path=file_path, ref=ref)
         content = f.decode().decode("utf-8", errors="replace")
         lines = content.splitlines()
@@ -88,6 +90,7 @@ def gitlab_list_repository_tree(
     per_page: Annotated[int, Field(default=50, ge=1, le=100, description="Items per page (1–100).")] = 50,
     page: Annotated[int, Field(default=1, ge=1, description="1-based page number.")] = 1,
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> RepoTreeOutput:
     """List files and directories at a given path in the repository.
 
@@ -97,13 +100,11 @@ def gitlab_list_repository_tree(
         - Don't use for full-text content — use ``gitlab_get_file`` for that.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         items = ci.project.repository_tree(
             path=path, ref=ref, recursive=recursive, per_page=per_page, page=page, get_all=False
         )
-        tree: list[TreeItem] = [
-            {"name": item["name"], "type": item["type"], "path": item["path"]} for item in items
-        ]
+        tree: list[TreeItem] = [{"name": item["name"], "type": item["type"], "path": item["path"]} for item in items]
         data: RepoTreeOutput = {
             "project": ci.project_path,
             "path": path or "/",
@@ -128,7 +129,7 @@ def gitlab_list_repository_tree(
     },
     structured_output=True,
 )
-def gitlab_project_info(project_path: ProjectPath = None) -> ProjectInfoOutput:
+def gitlab_project_info(project_path: ProjectPath = None, ctx: Context | None = None) -> ProjectInfoOutput:
     """Return basic metadata about a project: ID, default branch, visibility, counts.
 
     Examples:
@@ -136,7 +137,7 @@ def gitlab_project_info(project_path: ProjectPath = None) -> ProjectInfoOutput:
         - "Is this repo public or private" → look at ``visibility``
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         p = ci.project
         data: ProjectInfoOutput = {
             "id": p.id,

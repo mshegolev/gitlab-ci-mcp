@@ -18,6 +18,7 @@ import warnings
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -40,6 +41,9 @@ _CACHE_TTL_SECONDS = 1800
 _CACHE_MAX_ENTRIES = 128
 _cache_hmac_key = secrets.token_bytes(32)
 _managers_lock = threading.RLock()
+# Static FastMCP resources cannot take Context without becoming templates. The HTTP
+# boundary scopes their PAT with this task-local value instead.
+_http_request_token: ContextVar[str | None] = ContextVar("gitlab_ci_mcp_http_token", default=None)
 
 
 @dataclass
@@ -125,7 +129,7 @@ def _request_gitlab_token(ctx: Context | None) -> str:
     if os.environ.get("MCP_TRANSPORT", "stdio").lower() == "streamable-http":
         request = ctx.request_context.request if ctx is not None else None
         headers = getattr(request, "headers", None)
-        token = headers.get("x-gitlab-token") if headers is not None else None
+        token = headers.get("x-gitlab-token") if headers is not None else _http_request_token.get()
         if not isinstance(token, str) or not token.strip():
             raise ValueError("X-GitLab-Token header is required for remote GitLab requests")
         return token.strip()
