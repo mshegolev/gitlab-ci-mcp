@@ -362,7 +362,7 @@ def test_update_check_can_be_enabled_and_disabled(monkeypatch: pytest.MonkeyPatc
     disabled = updates.gitlab_ci_mcp_check_updates()
     assert disabled.structuredContent["status"] == "disabled"
 
-    expected = {"status": "current", "installed_version": "0.5.4", "cached": False}
+    expected = {"status": "current", "installed_version": "0.5.5", "cached": False}
     calls = []
     monkeypatch.setenv("MCP_GITLAB_UPDATE_CHECK_ENABLED", "true")
     monkeypatch.setattr(updates, "_check", lambda: calls.append(True) or expected)

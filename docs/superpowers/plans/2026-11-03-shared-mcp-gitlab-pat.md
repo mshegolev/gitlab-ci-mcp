@@ -122,7 +122,7 @@
 - [x] Update `server.json` environment metadata to explain conditional `GITLAB_TOKEN` use and add HTTP transport/host/port settings.
 - [x] Replace the obsolete OAuth-only blocker document with the selected direct-PAT model, constraints, lifecycle, and remaining limitations.
 - [x] Add an issue #4 comment explaining implementation and custom-header tradeoffs; keep issue state accurate.
-- [ ] Commit Task 5 as `docs: document shared MCP PAT authentication`, staging the updated docs, server metadata, design, and implementation plan.
+- [x] Commit Task 5 as `docs: document shared MCP PAT authentication`, staging the updated docs, server metadata, design, and implementation plan.
 
 ### Task 6: Versioned release and full verification
 
