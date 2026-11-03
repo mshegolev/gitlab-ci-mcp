@@ -1,51 +1,23 @@
-# gitlab-ci-mcp — установка в Claude Code
+# gitlab-ci-mcp — подключение Claude Code
 
-Пошаговая инструкция для подключения `gitlab-ci-mcp` к Claude Code CLI. После
-установки ваш агент сможет работать с GitLab напрямую: смотреть пайплайны,
-тригерить запуски, создавать MR, читать файлы из репозитория, анализировать
-health CI/CD.
+## Локальный режим: stdio
 
-## 0. Что потребуется
-
-| Требование | Как получить |
-| --- | --- |
-| **Claude Code CLI** | `npm install -g @anthropic-ai/claude-code` → `claude login` |
-| **Python ≥ 3.10** | `python3 --version` (обычно уже есть) |
-| **`uv` / `uvx`** | `brew install uv` (macOS) или `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| **GitLab Personal Access Token** | GitLab → **Edit profile** → **Access Tokens** → name `claude-code-mcp`, scope `api`, срок по вашей политике |
-| **Путь проекта** | `namespace/project` из URL; передаётся в каждом вызове GitLab tool |
-
-> **Self-hosted GitLab в корп-сети?** Проверьте что VPN поднят и `curl $GITLAB_URL/api/v4/version` работает из терминала. При необходимости см. раздел "Self-hosted" в основном README.
-
-## 1. Установка — один из двух вариантов
-
-### Вариант A. Через `claude mcp add` (быстрый старт)
-
-Глобально для всех проектов:
+Для локального процесса нужен свой GitLab PAT с `api` scope и URL GitLab.
+Путь проекта передаётся явно в вызовах tools.
 
 ```bash
-claude mcp add gitlab uvx --from gitlab-ci-mcp gitlab-ci-mcp \
+# GITLAB_PAT должен быть загружен из secret manager в окружение
+claude mcp add --transport stdio \
   --env GITLAB_URL=https://gitlab.example.com \
-  --env GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx \
-  --env GITLAB_PROJECT_PATH=my-org/my-repo \
-  --env GITLAB_ALLOW_DEFAULT_PROJECT=true
+  --env GITLAB_TOKEN="$GITLAB_PAT" \
+  gitlab -- uvx --from gitlab-ci-mcp gitlab-ci-mcp
 ```
 
-Это явно включает совместимость со старым default-проектом. В строгом режиме
-удалите обе переменные `GITLAB_PROJECT_PATH` и `GITLAB_ALLOW_DEFAULT_PROJECT`
-и передавайте `project_path` в каждом вызове.
+`GITLAB_TOKEN` относится только к локальному stdio режиму. Один такой процесс
+использует один PAT.
 
-Флаги:
-
-- `gitlab` — имя сервера в `claude mcp list` и в `/mcp`. Произвольное.
-- `uvx --from gitlab-ci-mcp gitlab-ci-mcp` — команда запуска. `uvx` поднимает
-  изолированное окружение для пакета с PyPI и выполняет его entry-point.
-- `--env` — переменные среды, которые видит сам сервер (не shell).
-
-### Вариант B. Через файл `.mcp.json` (рекомендуется для команды)
-
-Положите в корень репозитория `.mcp.json`, **без токена** — чтобы файл можно
-было закоммитить:
+Для `.mcp.json` локального stdio сервера можно передавать секрет через
+переменную окружения:
 
 ```json
 {
@@ -56,174 +28,88 @@ claude mcp add gitlab uvx --from gitlab-ci-mcp gitlab-ci-mcp \
       "args": ["--from", "gitlab-ci-mcp", "gitlab-ci-mcp"],
       "env": {
         "GITLAB_URL": "https://gitlab.example.com",
-        "GITLAB_TOKEN": "${GITLAB_TOKEN}",
-        "GITLAB_PROJECT_PATH": "my-org/my-repo",
-        "GITLAB_ALLOW_DEFAULT_PROJECT": "true",
-        "GITLAB_SSL_VERIFY": "true"
+        "GITLAB_TOKEN": "${GITLAB_PAT}"
       }
     }
   }
 }
 ```
 
-Токен в `~/.zshrc` (или `~/.bash_profile`):
+## Общий сервер: Streamable HTTP
+
+Администратор запускает MCP на сервере за HTTPS reverse proxy:
 
 ```bash
-export GITLAB_TOKEN="glpat-xxxxxxxxxxxxxxxxxxxx"
+MCP_TRANSPORT=streamable-http \
+MCP_HTTP_HOST=127.0.0.1 \
+MCP_HTTP_PORT=8000 \
+GITLAB_URL=https://gitlab.example.com \
+gitlab-ci-mcp
 ```
 
-Для глобального применения положите тот же JSON в `~/.claude.json` в секцию
-`mcpServers`.
+На клиенте у каждого разработчика должен быть свой PAT. Подавайте его в
+кастомном HTTP-заголовке; PAT не передаётся как MCP tool argument и не должен
+попадать в URL, общий `.mcp.json`, промпты или историю shell в открытом виде.
 
-Проверка обновлений выключена по умолчанию. Чтобы разрешить вызов
-`gitlab_ci_mcp_check_updates` с запросом к PyPI, задайте
-`MCP_GITLAB_UPDATE_CHECK_ENABLED=true`; чтобы отключить — `false` или удалите
-переменную. При отключённой проверке инструмент сообщает статус `disabled`
-и не обращается к сети.
+```bash
+# GITLAB_PAT должен быть предоставлен secret manager в окружение
+claude mcp add --transport http \
+  --header "X-GitLab-Token: ${GITLAB_PAT}" \
+  gitlab https://mcp.example.com/mcp
+```
 
-## 2. Проверка
+Либо настройте HTTP сервер в конфигурации клиента:
+
+```json
+{
+  "mcpServers": {
+    "gitlab": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "X-GitLab-Token": "${GITLAB_PAT}"
+      }
+    }
+  }
+}
+```
+
+Такой способ передаёт PAT непосредственно GitLab API как пользовательскую
+учётную запись. Это custom-header auth, не стандартный OAuth flow MCP. Клиент
+должен отправлять header на каждый запрос. Для текущих write tools необходим
+GitLab PAT с `api` scope. HTTPS обязателен; прокси и tracing должны скрывать
+`X-GitLab-Token` в логах.
+
+Сервер проверяет наличие непустого header, а валидность PAT GitLab проверяет
+при первом API вызове. Поэтому подключение и список tools могут работать с
+отозванным токеном, но GitLab операция завершится ошибкой авторизации.
+
+## Project scope и resources
+
+Каждый GitLab tool требует `project_path`, если оператор явно не включил
+совместимый fallback `GITLAB_ALLOW_DEFAULT_PROJECT=true` вместе с
+`GITLAB_PROJECT_PATH`. Статические resources `gitlab://project/info` и
+`gitlab://project/ci-config` не принимают путь проекта; они работают только
+при включённом fallback и в HTTP режиме используют PAT текущего запроса.
+
+## Остальные настройки
+
+Проверка обновлений выключена по умолчанию. Установите
+`MCP_GITLAB_UPDATE_CHECK_ENABLED=true`, чтобы включить явный вызов
+`gitlab_ci_mcp_check_updates`; `false` или отсутствие переменной отключает
+сетевой запрос к PyPI.
+
+Для self-hosted GitLab за корпоративным proxy см. разделы **Configuration** и
+**Self-hosted GitLab behind a corporate proxy** в [основном README](../README.md).
+
+Подробности по credential isolation, кэшу, сроку жизни и ограничениям:
+[docs/per-user-auth.md](per-user-auth.md).
+
+## Проверка и удаление
 
 ```bash
 claude mcp list
 ```
 
-Ожидаемый вывод:
-
-```
-gitlab: uvx --from gitlab-ci-mcp gitlab-ci-mcp - ✓ Connected
-```
-
-Если запущен Claude Code — перезапустите сессию (`/exit` → `claude`). Внутри
-сессии:
-
-```
-/mcp
-```
-
-Должен показать `gitlab` со списком из **23 tools** и **2 resources**
-(`gitlab://project/info`, `gitlab://project/ci-config`).
-
-## 3. Первые запросы
-
-Скопируйте в Claude Code — агент выберет правильный tool автоматически.
-
-```
-покажи последние 10 pipelines на master
-```
-
-```
-какой health у master за 7 дней
-```
-
-```
-что сломалось в последнем упавшем pipeline, покажи лог упавшего job
-```
-
-```
-открой MR из feature/login в master с title "feat: login", описание из commit history
-```
-
-```
-покажи .gitlab-ci.yml на master
-```
-
-## 4. Работа с несколькими проектами
-
-По умолчанию каждый GitLab tool требует явный `project_path`. Для запросов
-передайте путь проекта в промпте:
-
-```
-покажи pipelines для проекта other-org/other-repo
-```
-
-Для старого поведения задайте одновременно `GITLAB_PROJECT_PATH` и
-`GITLAB_ALLOW_DEFAULT_PROJECT=true`. Сервер создаёт отдельную кешированную
-HTTP-сессию для каждого `project_path`.
-
-## 5. Корпоративный self-hosted GitLab
-
-Если GitLab во внутренней сети за локальным HTTP-прокси (типа `127.0.0.1:3128`),
-пропишите в env сервера:
-
-```json
-{
-  "GITLAB_NO_PROXY_DOMAINS": ".corp.example.com,gitlab.internal",
-  "GITLAB_SSL_VERIFY": "false"
-}
-```
-
-Сервер сам добавит эти домены в `NO_PROXY` и очистит `HTTP(S)_PROXY` из своего
-процесса — запросы к GitLab пойдут напрямую.
-
-## 6. Безопасность
-
-- **Токен храните в env-переменной** или менеджере паролей, не в `.mcp.json` прямым текстом
-- В `.mcp.json` используйте `"${GITLAB_TOKEN}"` — Claude Code подставит значение из shell
-- PAT выдавайте с ограниченным сроком (3–6 месяцев), ротируйте
-- При смене проекта/увольнении — отзовите токен в GitLab
-
-## 7. Troubleshooting
-
-### `✗ Failed to connect`
-
-```bash
-# 1. uvx вообще работает?
-which uvx
-uvx --version
-
-# 2. пакет ставится?
-uvx --from gitlab-ci-mcp gitlab-ci-mcp --help 2>&1 | head
-
-# 3. вручную запустить — увидите настоящую ошибку
-GITLAB_URL=https://gitlab.example.com \
-GITLAB_TOKEN=glpat-xxx \
-GITLAB_PROJECT_PATH=my-org/my-repo \
-GITLAB_ALLOW_DEFAULT_PROJECT=true \
-uvx --from gitlab-ci-mcp gitlab-ci-mcp
-```
-
-### `GitLab authentication failed`
-
-- Токен истёк или не имеет scope `api` — пересоздайте
-- Токен с пробелом/переносом в конце — перевыпустите и скопируйте через кнопку Copy
-
-### `not found (HTTP 404)`
-
-- Проверьте переданный `project_path` (или `GITLAB_PROJECT_PATH` вместе с `GITLAB_ALLOW_DEFAULT_PROJECT=true`): `namespace/project` **целиком**, не только project name
-- Убедитесь что ваша учётка имеет доступ к проекту
-
-### `SSL: CERTIFICATE_VERIFY_FAILED`
-
-Self-signed или корпоративный CA? Установите `GITLAB_SSL_VERIFY=false` в env
-сервера (для dev). Для prod — добавьте корпоративный CA в системный trust store.
-
-### Прокси режет запросы к `*.example.com` / `*.corp.*`
-
-См. раздел **5. Self-hosted GitLab** выше — используйте `GITLAB_NO_PROXY_DOMAINS`.
-
-### Claude Code не видит сервер после правки `.mcp.json`
-
-- Проверьте синтаксис: `jq . .mcp.json`
-- `/exit` → `claude` перезапускает сессию
-- `claude mcp list` должен показать `gitlab` со статусом
-
-### Нужно увидеть логи сервера
-
-Сервер логирует в stderr. Запустите вручную с `--help`-обёрткой в shell и
-посмотрите stderr, либо в Claude Code включите verbose режим MCP если клиент
-его поддерживает.
-
-## 8. Удаление
-
-```bash
-claude mcp remove gitlab
-```
-
-Или удалите секцию из `.mcp.json` / `~/.claude.json` и перезапустите сессию.
-
-## Ссылки
-
-- [Основной README](../README.md) — полный справочник по всем 23 tools
-- [CHANGELOG](../CHANGELOG.md)
-- [evaluations/questions.xml](../evaluations/questions.xml) — 22 тестовых промпта
-- [Claude Code MCP docs](https://docs.anthropic.com/en/docs/claude-code/mcp)
+Локальный сервер удаляется командой `claude mcp remove gitlab`; удалённый —
+так же, если он был добавлен с этим именем.

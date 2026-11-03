@@ -24,8 +24,8 @@
         },
         {
           "name": "GITLAB_TOKEN",
-          "description": "GitLab Personal Access Token with 'api' scope",
-          "isRequired": true,
+          "description": "Personal Access Token with 'api' scope for stdio. In streamable-http mode, each caller instead sends its own X-GitLab-Token header.",
+          "isRequired": false,
           "isSecret": true,
           "format": "string"
         },
@@ -55,6 +55,27 @@
           "isRequired": false,
           "format": "string",
           "default": "true"
+        },
+        {
+          "name": "MCP_TRANSPORT",
+          "description": "Server transport: stdio (single-user GITLAB_TOKEN) or streamable-http (per-request X-GitLab-Token).",
+          "isRequired": false,
+          "format": "string",
+          "default": "stdio"
+        },
+        {
+          "name": "MCP_HTTP_HOST",
+          "description": "HTTP bind host when MCP_TRANSPORT=streamable-http; default loopback is 127.0.0.1.",
+          "isRequired": false,
+          "format": "string",
+          "default": "127.0.0.1"
+        },
+        {
+          "name": "MCP_HTTP_PORT",
+          "description": "HTTP bind port when MCP_TRANSPORT=streamable-http.",
+          "isRequired": false,
+          "format": "string",
+          "default": "8000"
         }
       ]
     }
