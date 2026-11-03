@@ -7,16 +7,23 @@ import from a module that also defines the entry point.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
+import secrets
+import threading
+import time
 import warnings
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 import urllib3
 import urllib3.exceptions
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from pydantic import Field
 
 from gitlab_ci_mcp.ci_manager import GitLabCIManager
@@ -29,7 +36,26 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
-_managers: dict[str, GitLabCIManager] = {}
+_CACHE_TTL_SECONDS = 1800
+_CACHE_MAX_ENTRIES = 128
+_cache_hmac_key = secrets.token_bytes(32)
+_managers_lock = threading.RLock()
+
+
+@dataclass
+class _ManagerCacheEntry:
+    manager: GitLabCIManager
+    last_used: float
+
+
+_managers: OrderedDict[tuple[str, str, str], _ManagerCacheEntry] = OrderedDict()
+
+
+def _close_manager(manager: GitLabCIManager) -> None:
+    try:
+        manager.gl.session.close()
+    except Exception:
+        logger.debug("gitlab_ci_mcp: failed to close an evicted GitLab session")
 
 
 @asynccontextmanager
@@ -40,12 +66,10 @@ async def app_lifespan(_app: FastMCP) -> AsyncIterator[dict[str, Any]]:
     try:
         yield {"managers": _managers}
     finally:
-        for m in _managers.values():
-            try:
-                m.gl.session.close()
-            except Exception:
-                pass
-        _managers.clear()
+        with _managers_lock:
+            for entry in _managers.values():
+                _close_manager(entry.manager)
+            _managers.clear()
         logger.debug("gitlab_ci_mcp: shutdown — all python-gitlab sessions closed")
 
 
@@ -96,12 +120,35 @@ ProjectPath = Annotated[
 # ── Utilities ───────────────────────────────────────────────────────────────
 
 
-def get_ci(project_path: str | None) -> GitLabCIManager:
+def _request_gitlab_token(ctx: Context | None) -> str:
+    """Get the GitLab credential for this HTTP call or stdio process."""
+    if os.environ.get("MCP_TRANSPORT", "stdio").lower() == "streamable-http":
+        request = ctx.request_context.request if ctx is not None else None
+        headers = getattr(request, "headers", None)
+        token = headers.get("x-gitlab-token") if headers is not None else None
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("X-GitLab-Token header is required for remote GitLab requests")
+        return token.strip()
+
+    token = os.environ.get("GITLAB_TOKEN")
+    if not token:
+        raise ValueError("GitLab token is required (set GITLAB_TOKEN for stdio mode)")
+    return token
+
+
+def _prune_manager_cache(now: float) -> None:
+    expired = [key for key, entry in _managers.items() if now - entry.last_used >= _CACHE_TTL_SECONDS]
+    for key in expired:
+        entry = _managers.pop(key)
+        _close_manager(entry.manager)
+
+
+def get_ci(project_path: str | None, *, ctx: Context | None = None) -> GitLabCIManager:
     """Return a cached ``GitLabCIManager`` for the given project path.
 
     ``None`` is rejected unless the explicit compatibility flag is enabled.
-    Managers are cached per path so the python-gitlab HTTP session is reused
-    across tool calls.
+    Managers are cached per GitLab URL, project, and process-keyed PAT
+    fingerprint. Raw PAT values are never cache keys.
     """
     if project_path is not None and not project_path.strip():
         raise ValueError("project_path must not be empty")
@@ -115,10 +162,25 @@ def get_ci(project_path: str | None) -> GitLabCIManager:
         project_path = os.environ.get("GITLAB_PROJECT_PATH")
         if not project_path:
             raise ValueError("GITLAB_PROJECT_PATH is required when compatibility fallback is enabled")
-    key = project_path
-    if key not in _managers:
-        _managers[key] = GitLabCIManager(project_path=project_path)
-    return _managers[key]
+    token = _request_gitlab_token(ctx)
+    gitlab_url = (os.environ.get("GITLAB_URL") or "").rstrip("/")
+    token_fingerprint = hmac.new(_cache_hmac_key, token.encode(), hashlib.sha256).hexdigest()
+    key = (gitlab_url, project_path, token_fingerprint)
+    now = time.monotonic()
+    with _managers_lock:
+        _prune_manager_cache(now)
+        entry = _managers.get(key)
+        if entry is not None:
+            entry.last_used = now
+            _managers.move_to_end(key)
+            return entry.manager
+
+        manager = GitLabCIManager(project_path=project_path, token=token)
+        _managers[key] = _ManagerCacheEntry(manager=manager, last_used=now)
+        while len(_managers) > _CACHE_MAX_ENTRIES:
+            _old_key, old_entry = _managers.popitem(last=False)
+            _close_manager(old_entry.manager)
+        return manager
 
 
 def ts(dt_str: str | None) -> str | None:

@@ -41,6 +41,221 @@ def test_manager_rejects_explicit_empty_scope_even_in_legacy_mode(monkeypatch: p
         GitLabCIManager(project_path="")
 
 
+def test_gitlab_clients_are_isolated_by_request_pat(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gitlab_ci_mcp import _mcp
+
+    class FakeManager:
+        def __init__(self, *, project_path: str, token: str | None = None) -> None:
+            self.project_path = project_path
+            self.token = token
+            self.gl = SimpleNamespace(session=SimpleNamespace(close=lambda: None))
+
+    def request_context(token: str):
+        request = SimpleNamespace(headers={"x-gitlab-token": token})
+        return SimpleNamespace(request_context=SimpleNamespace(request=request))
+
+    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setenv("GITLAB_URL", "https://gitlab.example.com")
+    monkeypatch.setenv("GITLAB_TOKEN", "shared-process-token")
+    monkeypatch.setenv("GITLAB_ALLOW_DEFAULT_PROJECT", "false")
+    monkeypatch.setattr(_mcp, "GitLabCIManager", FakeManager)
+    _mcp._managers.clear()
+
+    first = _mcp.get_ci("demo/repo", ctx=request_context("pat-user-a"))
+    second = _mcp.get_ci("demo/repo", ctx=request_context("pat-user-b"))
+    first_again = _mcp.get_ci("demo/repo", ctx=request_context("pat-user-a"))
+
+    assert first is not second
+    assert first is first_again
+    assert first.token == "pat-user-a"
+    assert second.token == "pat-user-b"
+    assert all("pat-user" not in str(key) for key in _mcp._managers)
+
+
+@pytest.mark.parametrize("headers", [None, {}, {"x-gitlab-token": "  "}])
+def test_http_request_requires_pat_without_process_token_fallback(monkeypatch, headers) -> None:
+    from gitlab_ci_mcp import _mcp
+
+    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setenv("GITLAB_TOKEN", "shared-process-token")
+    request = SimpleNamespace(headers=headers) if headers is not None else None
+    ctx = SimpleNamespace(request_context=SimpleNamespace(request=request))
+
+    with pytest.raises(ValueError, match="X-GitLab-Token header is required"):
+        _mcp._request_gitlab_token(ctx)
+
+
+def test_stdio_request_uses_process_pat(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gitlab_ci_mcp import _mcp
+
+    monkeypatch.setenv("MCP_TRANSPORT", "stdio")
+    monkeypatch.setenv("GITLAB_TOKEN", "stdio-personal-token")
+
+    assert _mcp._request_gitlab_token(None) == "stdio-personal-token"
+
+
+def test_get_ci_http_mode_does_not_fall_back_to_process_pat(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gitlab_ci_mcp import _mcp
+
+    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setenv("GITLAB_TOKEN", "shared-process-token")
+    monkeypatch.setenv("GITLAB_ALLOW_DEFAULT_PROJECT", "false")
+    _mcp._managers.clear()
+
+    with pytest.raises(ValueError, match="X-GitLab-Token header is required"):
+        _mcp.get_ci("demo/repo")
+
+    assert not _mcp._managers
+
+
+def test_manager_cache_evicts_lru_and_closes_evicted_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gitlab_ci_mcp import _mcp
+
+    now = {"value": 100.0}
+    created = []
+
+    class FakeManager:
+        def __init__(self, *, project_path: str, token: str | None = None) -> None:
+            self.project_path = project_path
+            self.token = token
+            self.closed = 0
+            self.gl = SimpleNamespace(session=SimpleNamespace(close=lambda: setattr(self, "closed", self.closed + 1)))
+            created.append(self)
+
+    def context(token: str):
+        return SimpleNamespace(
+            request_context=SimpleNamespace(request=SimpleNamespace(headers={"x-gitlab-token": token}))
+        )
+
+    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setenv("GITLAB_URL", "https://gitlab.example.com")
+    monkeypatch.setenv("GITLAB_ALLOW_DEFAULT_PROJECT", "false")
+    monkeypatch.setattr(_mcp, "GitLabCIManager", FakeManager)
+    monkeypatch.setattr(_mcp, "_CACHE_MAX_ENTRIES", 2)
+    monkeypatch.setattr(_mcp, "_CACHE_TTL_SECONDS", 1800)
+    monkeypatch.setattr(_mcp.time, "monotonic", lambda: now["value"])
+    _mcp._managers.clear()
+
+    first = _mcp.get_ci("demo/repo", ctx=context("token-a"))
+    second = _mcp.get_ci("demo/repo", ctx=context("token-b"))
+    assert _mcp.get_ci("demo/repo", ctx=context("token-a")) is first
+    third = _mcp.get_ci("demo/repo", ctx=context("token-c"))
+
+    assert second.closed == 1
+    assert first.closed == 0
+    assert len(_mcp._managers) == 2
+    assert third.token == "token-c"
+
+
+def test_manager_cache_expires_idle_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gitlab_ci_mcp import _mcp
+
+    now = {"value": 100.0}
+    created = []
+
+    class FakeManager:
+        def __init__(self, *, project_path: str, token: str | None = None) -> None:
+            self.project_path = project_path
+            self.token = token
+            self.closed = 0
+            self.gl = SimpleNamespace(session=SimpleNamespace(close=lambda: setattr(self, "closed", self.closed + 1)))
+            created.append(self)
+
+    def context(token: str):
+        return SimpleNamespace(
+            request_context=SimpleNamespace(request=SimpleNamespace(headers={"x-gitlab-token": token}))
+        )
+
+    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setenv("GITLAB_URL", "https://gitlab.example.com")
+    monkeypatch.setenv("GITLAB_ALLOW_DEFAULT_PROJECT", "false")
+    monkeypatch.setattr(_mcp, "GitLabCIManager", FakeManager)
+    monkeypatch.setattr(_mcp, "_CACHE_TTL_SECONDS", 10)
+    monkeypatch.setattr(_mcp.time, "monotonic", lambda: now["value"])
+    _mcp._managers.clear()
+
+    expired = _mcp.get_ci("demo/repo", ctx=context("old-token"))
+    now["value"] = 111.0
+    current = _mcp.get_ci("demo/repo", ctx=context("new-token"))
+
+    assert expired.closed == 1
+    assert len(_mcp._managers) == 1
+    assert current is not expired
+
+
+def test_manager_cache_is_thread_safe_for_concurrent_same_pat(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from gitlab_ci_mcp import _mcp
+
+    created = []
+    start = threading.Barrier(3)
+
+    class FakeManager:
+        def __init__(self, *, project_path: str, token: str | None = None) -> None:
+            time.sleep(0.02)
+            self.project_path = project_path
+            self.token = token
+            self.gl = SimpleNamespace(session=SimpleNamespace(close=lambda: None))
+            created.append(self)
+
+    context = SimpleNamespace(
+        request_context=SimpleNamespace(
+            request=SimpleNamespace(headers={"x-gitlab-token": "same-user-token"})
+        )
+    )
+    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setenv("GITLAB_URL", "https://gitlab.example.com")
+    monkeypatch.setenv("GITLAB_ALLOW_DEFAULT_PROJECT", "false")
+    monkeypatch.setattr(_mcp, "GitLabCIManager", FakeManager)
+    _mcp._managers.clear()
+
+    def load_manager():
+        start.wait()
+        return _mcp.get_ci("demo/repo", ctx=context)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(load_manager)
+        second = pool.submit(load_manager)
+        start.wait()
+        first_result, second_result = first.result(), second.result()
+
+    assert first_result is second_result
+    assert len(created) == 1
+
+
+def test_app_shutdown_closes_cached_gitlab_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from gitlab_ci_mcp import _mcp
+
+    class FakeManager:
+        def __init__(self, *, project_path: str, token: str | None = None) -> None:
+            self.project_path = project_path
+            self.token = token
+            self.closed = 0
+            self.gl = SimpleNamespace(session=SimpleNamespace(close=lambda: setattr(self, "closed", self.closed + 1)))
+
+    monkeypatch.setenv("MCP_TRANSPORT", "stdio")
+    monkeypatch.setenv("GITLAB_TOKEN", "stdio-token")
+    monkeypatch.setenv("GITLAB_URL", "https://gitlab.example.com")
+    monkeypatch.setenv("GITLAB_ALLOW_DEFAULT_PROJECT", "false")
+    monkeypatch.setattr(_mcp, "GitLabCIManager", FakeManager)
+    _mcp._managers.clear()
+    manager = _mcp.get_ci("demo/repo")
+
+    async def shutdown() -> None:
+        async with _mcp.app_lifespan(_mcp.mcp):
+            pass
+
+    asyncio.run(shutdown())
+
+    assert manager.closed == 1
+    assert not _mcp._managers
+
+
 def test_update_tool_is_explicitly_registered() -> None:
     import asyncio
 
