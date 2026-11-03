@@ -9,7 +9,7 @@
 
 MCP server for GitLab CI/CD. Lets an LLM agent (Claude Code, Cursor, OpenCode, DevX Agent, etc.) work with pipelines, jobs, schedules, branches, tags, merge requests and repository files.
 
-Python, [FastMCP](https://github.com/modelcontextprotocol/python-sdk), stdio transport.
+Python and [FastMCP](https://github.com/modelcontextprotocol/python-sdk). Local stdio remains the default; opt-in Streamable HTTP supports shared deployments with one GitLab PAT per caller.
 
 Works with any GitLab — SaaS `gitlab.com` or self-hosted / on-prem. Designed with corporate networks in mind: configurable `NO_PROXY` handling, optional SSL-verify toggle, per-project scoping via env vars.
 
@@ -19,9 +19,9 @@ Works with any GitLab — SaaS `gitlab.com` or self-hosted / on-prem. Designed w
 - **Structured output on every tool** — each tool declares a TypedDict return type, so FastMCP auto-generates an `outputSchema` and every result carries `structuredContent` alongside a pre-rendered markdown text block. Clients that can render structured data use it; agents that prefer compact text get the markdown. No `response_format` parameter needed.
 - **Structured errors** — authentication, 404, 403, 429 (rate-limit), 5xx, missing-env errors are converted to actionable `ToolError` messages (e.g. _"GitLab authentication failed… verify GITLAB_TOKEN has `api` scope"_) and surfaced as `isError=True` results.
 - **Pydantic input validation** — every argument has typed constraints (ranges, lengths, literals) auto-exposed as JSON Schema.
-- **Project scoping per call** — every tool accepts an optional `project_path` that overrides `GITLAB_PROJECT_PATH` for cross-project queries.
+- **Explicit project scoping** — every GitLab tool requires `project_path` by default. Set `GITLAB_ALLOW_DEFAULT_PROJECT=true` to opt into the legacy environment fallback.
 - **Pagination** — list tools return a `pagination` block with `page`, `total`, `has_more`, `next_page` and a next-page hint in the markdown footer.
-- **MCP Context integration** — `gitlab_pipeline_health` and `gitlab_get_job_log` are `async` and emit `info` logs / `report_progress` events through the MCP Context so clients can show progress bars.
+- **Per-user HTTP credentials** — in Streamable HTTP mode every request must carry `X-GitLab-Token`; GitLab API calls and cached clients are isolated by PAT. Stdio remains single-user with `GITLAB_TOKEN`.
 - **MCP Resources** — `gitlab://project/info` and `gitlab://project/ci-config` mirror common lookups for clients that prefer the Resource model over tools.
 - **Lifespan management** — `python-gitlab` HTTP sessions are closed cleanly on server shutdown via an `asynccontextmanager` lifespan hook.
 - **Log grep** — `gitlab_get_job_log` accepts `grep_pattern` + `grep_context` (surrounding lines) for regex-filtering megabyte-scale CI logs without pulling the whole trace into agent context.
@@ -37,7 +37,7 @@ wrap `python-gitlab` calls with `asyncio.to_thread`.
 
 ## Features
 
-23 tools covering the everyday CI/CD surface:
+24 tools covering the everyday CI/CD surface:
 
 **Pipelines**
 `gitlab_list_pipelines` · `gitlab_get_pipeline` · `gitlab_get_pipeline_jobs` · `gitlab_get_job_log` · `gitlab_trigger_pipeline` · `gitlab_retry_pipeline` · `gitlab_cancel_pipeline` · `gitlab_pipeline_health`
@@ -53,6 +53,9 @@ wrap `python-gitlab` calls with `asyncio.to_thread`.
 
 **Repository & project**
 `gitlab_get_file` · `gitlab_list_repository_tree` · `gitlab_project_info`
+
+**Package**
+`gitlab_ci_mcp_check_updates`
 
 ### Pipeline health report
 
@@ -85,12 +88,63 @@ All config is via environment variables:
 | Variable | Required | Description |
 | --- | --- | --- |
 | `GITLAB_URL` | **yes** | Base URL, e.g. `https://gitlab.example.com` |
-| `GITLAB_TOKEN` | **yes** | Personal Access Token with `api` scope |
-| `GITLAB_PROJECT_PATH` | **yes** | Default project, e.g. `my-org/my-repo` |
+| `GITLAB_TOKEN` | stdio only | Personal Access Token with `api` scope. In HTTP mode, each client sends its own `X-GitLab-Token` header. |
+| `MCP_TRANSPORT` | no | `stdio` (default) or `streamable-http` |
+| `MCP_HTTP_HOST` | no | HTTP bind host; defaults to `127.0.0.1` |
+| `MCP_HTTP_PORT` | no | HTTP bind port; defaults to `8000` |
+| `GITLAB_PROJECT_PATH` | no | Legacy fallback project; used only with `GITLAB_ALLOW_DEFAULT_PROJECT=true` |
+| `GITLAB_ALLOW_DEFAULT_PROJECT` | no | Set to `true` to opt into the legacy `GITLAB_PROJECT_PATH` fallback |
+| `MCP_GITLAB_UPDATE_CHECK_ENABLED` | no | `false` by default; set to `true` to allow the explicit update-check tool to query PyPI |
 | `GITLAB_SSL_VERIFY` | no | `true` (default) / `false` |
 | `GITLAB_NO_PROXY_DOMAINS` | no | Comma-separated domains to add to `NO_PROXY` (useful in corp networks behind a local HTTP proxy — e.g. `.corp.example.com,gitlab.internal`) |
 
-Every tool accepts an optional `project_path` arg that overrides `GITLAB_PROJECT_PATH` per call — useful for cross-project queries.
+Every tool accepts a `project_path` arg. It is required by default so a call
+cannot silently target an environment-wide project. For legacy deployments,
+set `GITLAB_ALLOW_DEFAULT_PROJECT=true` together with `GITLAB_PROJECT_PATH` to
+opt into the old fallback behavior.
+
+Update checking is disabled by default. Set `MCP_GITLAB_UPDATE_CHECK_ENABLED=true`
+to enable the explicit `gitlab_ci_mcp_check_updates` tool. When enabled, it
+makes one bounded request to fixed PyPI JSON, caches a result for five minutes,
+reports failures and unsupported versions, and never installs anything. No
+startup or other tool call performs this request. If called while disabled,
+the tool reports `disabled` without making a network request.
+
+Pipeline health success rate uses completed pipelines only: `success` and
+`failed` are in the denominator; `running`, `pending`, `manual`, `canceled`,
+`skipped`, and other non-completed statuses are excluded. A missing comparison
+period or a sample without completed pipelines is reported as insufficient
+data, not as a zero rate or a flat trend.
+
+## Shared Streamable HTTP deployment
+
+For a shared server, run with `MCP_TRANSPORT=streamable-http`. Each caller
+must send their own GitLab PAT in `X-GitLab-Token`; the server never falls back
+to the process `GITLAB_TOKEN` in this mode. GitLab applies that PAT's identity
+and permissions to each API operation. The header is a custom credential
+mechanism, not MCP OAuth; clients need support for configured custom headers.
+
+The server binds to loopback (`127.0.0.1:8000`) by default. Expose it through
+an HTTPS reverse proxy, restrict network access, and redact the PAT header from
+proxy, tracing, and error logs. Initialize and tool discovery only check that
+the header is non-empty; GitLab validates the PAT when an API call is made.
+
+Example for Claude Code (provide `GITLAB_PAT` through a secret manager; do not
+put a literal token in shell history):
+
+```bash
+claude mcp add --transport http \
+  --header "X-GitLab-Token: ${GITLAB_PAT}" \
+  gitlab https://mcp.example.com/mcp
+```
+
+The client must attach the header to every request. Each GitLab tool still
+requires an explicit `project_path`. Fixed resources
+`gitlab://project/info` and `gitlab://project/ci-config` have no project
+argument; they require the explicit compatibility setting
+`GITLAB_ALLOW_DEFAULT_PROJECT=true` and `GITLAB_PROJECT_PATH`.
+
+Full credential details and limitations: [docs/per-user-auth.md](docs/per-user-auth.md).
 
 ## Claude Code
 
@@ -99,11 +153,15 @@ Every tool accepts an optional `project_path` arg that overrides `GITLAB_PROJECT
 Short version:
 
 ```bash
-claude mcp add gitlab uvx --from gitlab-ci-mcp gitlab-ci-mcp \
+claude mcp add --transport stdio \
   --env GITLAB_URL=https://gitlab.example.com \
-  --env GITLAB_TOKEN=glpat-xxxxxx \
-  --env GITLAB_PROJECT_PATH=my-org/my-repo
+  --env GITLAB_TOKEN="$GITLAB_PAT" \
+  gitlab -- uvx --from gitlab-ci-mcp gitlab-ci-mcp
 ```
+
+Each GitLab tool call must include `project_path`, for example
+`project_path="my-org/my-repo"`. For legacy default-project behavior, also set
+`GITLAB_PROJECT_PATH` and `GITLAB_ALLOW_DEFAULT_PROJECT=true`.
 
 Or in `~/.claude.json` / project `.mcp.json`:
 
@@ -116,8 +174,9 @@ Or in `~/.claude.json` / project `.mcp.json`:
       "args": ["--from", "gitlab-ci-mcp", "gitlab-ci-mcp"],
       "env": {
         "GITLAB_URL": "https://gitlab.example.com",
-        "GITLAB_TOKEN": "${GITLAB_TOKEN}",
+        "GITLAB_TOKEN": "${GITLAB_PAT}",
         "GITLAB_PROJECT_PATH": "my-org/my-repo",
+        "GITLAB_ALLOW_DEFAULT_PROJECT": "true",
         "GITLAB_SSL_VERIFY": "true"
       }
     }
@@ -159,9 +218,7 @@ Same idea — point the MCP config to `uvx --from gitlab-ci-mcp gitlab-ci-mcp` w
 GitLab enforces a per-user rate limit (typically 2000 req/h for the REST API,
 configurable by the admin — see your instance's `/admin/application_settings/network`).
 
-- The server caches one `python-gitlab` HTTP session **per `project_path`**, so
-  repeated tool calls against the same project reuse the connection and do not
-  re-authenticate each time.
+- The server caches a bounded `python-gitlab` HTTP session per GitLab URL, project, and PAT fingerprint. Different users never reuse one another's cached client.
 - List tools default to `per_page=20` to keep a single call within a small
   number of API requests.
 - If you hit a `429 Too Many Requests`, the error handler returns an actionable
@@ -184,10 +241,10 @@ pip install -e '.[dev]'
 pytest
 ```
 
-Run the server directly (stdio transport, waits on stdin for MCP messages):
+Run the server directly (stdio transport is the default and waits on stdin for MCP messages):
 
 ```bash
-GITLAB_URL=... GITLAB_TOKEN=... GITLAB_PROJECT_PATH=... gitlab-ci-mcp
+GITLAB_URL=... GITLAB_TOKEN=... gitlab-ci-mcp
 ```
 
 ## License

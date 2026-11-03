@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
+from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from gitlab_ci_mcp import formatters, output
@@ -26,7 +27,7 @@ from gitlab_ci_mcp.models import (
     },
     structured_output=True,
 )
-def gitlab_list_schedules(project_path: ProjectPath = None) -> SchedulesListOutput:
+def gitlab_list_schedules(project_path: ProjectPath = None, ctx: Context | None = None) -> SchedulesListOutput:
     """List all CI/CD schedules of a project.
 
     Variable keys whose name hints at a secret (``TOKEN``, ``PASSWORD``,
@@ -40,7 +41,7 @@ def gitlab_list_schedules(project_path: ProjectPath = None) -> SchedulesListOutp
           with the schedule's variables instead.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         schedules = ci.list_schedules()
         summaries: list[ScheduleSummary] = [
             {
@@ -94,6 +95,7 @@ def gitlab_create_schedule(
     ] = "UTC",
     active: Annotated[bool, Field(default=True, description="Activate the schedule immediately.")] = True,
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> ScheduleActionResult:
     """Create a new CI/CD schedule with the given cron and variables.
 
@@ -107,7 +109,7 @@ def gitlab_create_schedule(
         - Don't use to update existing schedules — use ``gitlab_update_schedule``.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         schedule_id = ci.create_schedule(
             description=description,
             cron=cron,
@@ -158,6 +160,7 @@ def gitlab_update_schedule(
         ),
     ] = None,
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> ScheduleActionResult:
     """Update an existing schedule. Only provided fields change.
 
@@ -170,7 +173,7 @@ def gitlab_update_schedule(
         - Don't pass ``variables`` unless you want to *replace* them entirely.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         ci.update_schedule(
             schedule_id=schedule_id,
             description=description,
@@ -200,6 +203,7 @@ def gitlab_update_schedule(
 def gitlab_delete_schedule(
     schedule_id: Annotated[int, Field(description="Schedule ID to delete.", gt=0)],
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> ScheduleActionResult:
     """Delete a schedule by ID. Cannot be undone.
 
@@ -209,7 +213,7 @@ def gitlab_delete_schedule(
           with ``active=False`` instead.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         ci.delete_schedule(schedule_id)
         data: ScheduleActionResult = {"schedule_id": schedule_id, "status": "deleted"}
         md = f"✘ Schedule `{schedule_id}` deleted"

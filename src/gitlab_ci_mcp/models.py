@@ -88,23 +88,33 @@ class JobLogOutput(TypedDict, total=False):
     log: str
     grep_pattern: str
     grep_matches: int
+    truncated: bool
+    bytes_read: int
+    matches_truncated: bool
+    output_truncated: bool
 
 
 class HealthOutput(TypedDict):
     project: str
     ref: str
     source: str
-    rate_7d: float
-    rate_30d: float
+    rate_7d: float | None
+    rate_30d: float | None
     trend: str
     total_7d: int
+    completed_7d: int
     success_7d: int
     failed_7d: int
     total_30d: int
+    completed_30d: int
     success_30d: int
     failed_30d: int
     last_10_statuses: list[str]
     generated_at: str
+    status: str
+    invalid_timestamps: int
+    insufficient_data: bool
+    rate_basis: str
 
 
 class PipelineActionResult(TypedDict, total=False):
@@ -234,6 +244,7 @@ class FileChange(TypedDict):
     renamed_file: bool | None
     deleted_file: bool | None
     diff: str
+    diff_truncated: bool
 
 
 class MRChangesOutput(TypedDict):
@@ -241,6 +252,10 @@ class MRChangesOutput(TypedDict):
     title: str | None
     files_count: int
     files: list[FileChange]
+    api_truncated: bool
+    api_total_count: int | str | None
+    api_overflow: bool
+    total_count: int
 
 
 class MRActionResult(TypedDict, total=False):
@@ -325,3 +340,14 @@ class ProjectInfoOutput(TypedDict):
 # Fallback when the typed shape is not worth duplicating. Agents still
 # see structuredContent, just without strict field validation.
 LooseOutput = dict[str, Any]
+
+
+class UpdateCheckOutput(TypedDict, total=False):
+    status: str
+    installed_version: str
+    latest_version: str
+    update_available: bool
+    release_url: str
+    install_command: str
+    cached: bool
+    detail: str

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
+from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from gitlab_ci_mcp import formatters, output, pagination
@@ -36,6 +37,7 @@ def gitlab_list_merge_requests(
     per_page: Annotated[int, Field(default=20, ge=1, le=100, description="Items per page (1–100).")] = 20,
     page: Annotated[int, Field(default=1, ge=1, description="1-based page number.")] = 1,
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> MRsListOutput:
     """List merge requests of a project, optionally filtered by state.
 
@@ -46,7 +48,7 @@ def gitlab_list_merge_requests(
         - Don't use when you have an MR IID — use ``gitlab_get_merge_request`` for detail.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         mrs = ci.project.mergerequests.list(state=state, per_page=per_page, page=page, get_all=False)
         summaries: list[MRSummary] = [
             {
@@ -87,10 +89,9 @@ def gitlab_list_merge_requests(
     structured_output=True,
 )
 def gitlab_get_merge_request(
-    mr_iid: Annotated[
-        int, Field(description="Merge request IID (project-local number shown as '!42').", gt=0)
-    ],
+    mr_iid: Annotated[int, Field(description="Merge request IID (project-local number shown as '!42').", gt=0)],
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> MRDetailOutput:
     """Get full information about a merge request by internal ID (``iid``).
 
@@ -102,7 +103,7 @@ def gitlab_get_merge_request(
         - Don't use to see changed files — use ``gitlab_get_merge_request_changes``.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         mr = ci.project.mergerequests.get(mr_iid)
         data: MRDetailOutput = {
             "iid": mr.iid,
@@ -142,6 +143,7 @@ def gitlab_get_merge_request(
 def gitlab_get_merge_request_changes(
     mr_iid: Annotated[int, Field(description="Merge request IID.", gt=0)],
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> MRChangesOutput:
     """List changed files in a merge request with truncated diffs (2KB per file).
 
@@ -155,9 +157,20 @@ def gitlab_get_merge_request_changes(
           with the MR's source branch.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         mr = ci.project.mergerequests.get(mr_iid)
         changes = mr.changes()
+        raw_changes = changes.get("changes", [])
+        api_total = changes.get("count") or changes.get("changes_count")
+        overflow = changes.get("overflow")
+        truncated = changes.get("truncated")
+        api_truncated = (
+            overflow is True
+            or str(overflow).lower() in {"true", "1"}
+            or truncated is True
+            or str(truncated).lower() in {"true", "1"}
+            or (isinstance(api_total, str) and api_total.endswith("+"))
+        )
         files: list[FileChange] = [
             {
                 "old_path": change.get("old_path"),
@@ -166,14 +179,19 @@ def gitlab_get_merge_request_changes(
                 "renamed_file": change.get("renamed_file"),
                 "deleted_file": change.get("deleted_file"),
                 "diff": change.get("diff", "")[:2000],
+                "diff_truncated": len(change.get("diff", "")) > 2000,
             }
-            for change in changes.get("changes", [])
+            for change in raw_changes
         ]
         data: MRChangesOutput = {
             "mr_iid": mr_iid,
             "title": changes.get("title"),
             "files_count": len(files),
             "files": files,
+            "api_truncated": api_truncated,
+            "api_overflow": api_truncated,
+            "api_total_count": api_total,
+            "total_count": api_total if isinstance(api_total, int) else len(files),
         }
         return output.ok(data, formatters.mr_changes(data))  # type: ignore[return-value]
     except Exception as exc:
@@ -201,10 +219,9 @@ def gitlab_create_merge_request(
     ] = None,
     description: Annotated[str | None, Field(default=None, description="MR description (markdown supported).")] = None,
     labels: Annotated[list[str] | None, Field(default=None, description="Labels to apply.")] = None,
-    remove_source_branch: Annotated[
-        bool, Field(default=True, description="Delete source branch after merge.")
-    ] = True,
+    remove_source_branch: Annotated[bool, Field(default=True, description="Delete source branch after merge.")] = True,
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> MRActionResult:
     """Create a merge request from ``source_branch`` into ``target_branch``.
 
@@ -217,7 +234,7 @@ def gitlab_create_merge_request(
         - Don't use to merge an already-open MR — use ``gitlab_merge_mr``.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         mr_data: dict[str, Any] = {
             "source_branch": source_branch,
             "target_branch": target_branch,
@@ -260,6 +277,7 @@ def gitlab_create_merge_request(
 def gitlab_merge_mr(
     mr_iid: Annotated[int, Field(description="Merge request IID to merge.", gt=0)],
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> MRActionResult:
     """Perform the actual merge if GitLab reports the MR can be merged.
 
@@ -272,7 +290,7 @@ def gitlab_merge_mr(
         - Don't call without checking ``gitlab_get_merge_request`` first when you suspect conflicts.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         mr = ci.project.mergerequests.get(mr_iid)
         if getattr(mr, "merge_status", "") != "can_be_merged":
             data: MRActionResult = {

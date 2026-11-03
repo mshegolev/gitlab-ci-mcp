@@ -6,12 +6,12 @@
     "url": "https://github.com/mshegolev/gitlab-ci-mcp",
     "source": "github"
   },
-  "version": "0.5.4",
+  "version": "0.5.5",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "gitlab-ci-mcp",
-      "version": "0.5.4",
+      "version": "0.5.5",
       "transport": {
         "type": "stdio"
       },
@@ -24,16 +24,30 @@
         },
         {
           "name": "GITLAB_TOKEN",
-          "description": "GitLab Personal Access Token with 'api' scope",
-          "isRequired": true,
+          "description": "Personal Access Token with 'api' scope for stdio. In streamable-http mode, each caller instead sends its own X-GitLab-Token header.",
+          "isRequired": false,
           "isSecret": true,
           "format": "string"
         },
         {
           "name": "GITLAB_PROJECT_PATH",
-          "description": "Default project path (e.g. my-org/my-repo); can be overridden per call",
+          "description": "Legacy default project path; only used when GITLAB_ALLOW_DEFAULT_PROJECT=true",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "GITLAB_ALLOW_DEFAULT_PROJECT",
+          "description": "Explicit compatibility opt-in for GITLAB_PROJECT_PATH fallback (true/false)",
+          "isRequired": false,
+          "format": "string",
+          "default": "false"
+        },
+        {
+          "name": "MCP_GITLAB_UPDATE_CHECK_ENABLED",
+          "description": "Enable the explicit PyPI update-check tool (true/false)",
+          "isRequired": false,
+          "format": "string",
+          "default": "false"
         },
         {
           "name": "GITLAB_SSL_VERIFY",
@@ -41,6 +55,27 @@
           "isRequired": false,
           "format": "string",
           "default": "true"
+        },
+        {
+          "name": "MCP_TRANSPORT",
+          "description": "Server transport: stdio (single-user GITLAB_TOKEN) or streamable-http (per-request X-GitLab-Token).",
+          "isRequired": false,
+          "format": "string",
+          "default": "stdio"
+        },
+        {
+          "name": "MCP_HTTP_HOST",
+          "description": "HTTP bind host when MCP_TRANSPORT=streamable-http; default loopback is 127.0.0.1.",
+          "isRequired": false,
+          "format": "string",
+          "default": "127.0.0.1"
+        },
+        {
+          "name": "MCP_HTTP_PORT",
+          "description": "HTTP bind port when MCP_TRANSPORT=streamable-http.",
+          "isRequired": false,
+          "format": "string",
+          "default": "8000"
         }
       ]
     }

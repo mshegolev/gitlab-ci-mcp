@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
+from mcp.server.fastmcp import Context
 from pydantic import Field
 
 from gitlab_ci_mcp import formatters, output, pagination
@@ -38,6 +39,7 @@ def gitlab_list_branches(
     per_page: Annotated[int, Field(default=20, ge=1, le=100, description="Items per page (1–100).")] = 20,
     page: Annotated[int, Field(default=1, ge=1, description="1-based page number.")] = 1,
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> BranchesListOutput:
     """List branches of a project, optionally filtered by substring.
 
@@ -51,7 +53,7 @@ def gitlab_list_branches(
           use ``gitlab_get_file`` on that ref and look at the error instead.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         kwargs: dict[str, Any] = {"per_page": per_page, "page": page, "get_all": False}
         if search:
             kwargs["search"] = search
@@ -97,6 +99,7 @@ def gitlab_list_tags(
     per_page: Annotated[int, Field(default=20, ge=1, le=100, description="Items per page (1–100).")] = 20,
     page: Annotated[int, Field(default=1, ge=1, description="1-based page number.")] = 1,
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> TagsListOutput:
     """List tags of a project, newest first.
 
@@ -107,7 +110,7 @@ def gitlab_list_tags(
         - "All v2.x releases" → ``search='v2.'``
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         kwargs: dict[str, Any] = {
             "per_page": per_page,
             "page": page,
@@ -155,6 +158,7 @@ def gitlab_compare_branches(
         str, Field(default="master", description="Target branch (default 'master').", min_length=1, max_length=255)
     ] = "master",
     project_path: ProjectPath = None,
+    ctx: Context | None = None,
 ) -> CompareOutput:
     """Compare two branches — returns up to 30 commits and the list of changed files.
 
@@ -165,7 +169,7 @@ def gitlab_compare_branches(
         - Don't use to fetch full diffs of an MR — use ``gitlab_get_merge_request_changes``.
     """
     try:
-        ci = get_ci(project_path)
+        ci = get_ci(project_path, ctx=ctx)
         comparison = ci.project.repository_compare(source, target)
         commits = comparison.get("commits", [])
         diffs = comparison.get("diffs", [])

@@ -5,6 +5,28 @@ All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-11-03
+
+### Added
+- Opt-in Streamable HTTP transport for shared deployments. Every request uses
+  the caller's GitLab PAT from `X-GitLab-Token`; stdio remains the default and
+  continues to use `GITLAB_TOKEN`.
+- Per-user manager/session isolation keyed by GitLab URL, project, and an
+  HMAC-only PAT fingerprint, with bounded cache eviction and session cleanup.
+- Release workflow runs pytest and Ruff against the exact tag commit before
+  publishing through PyPI Trusted Publisher/OIDC.
+- Explicit update check: disabled by default and enabled only with
+  `MCP_GITLAB_UPDATE_CHECK_ENABLED=true`.
+
+### Fixed
+- Pipeline health now distinguishes API failures, incomplete pagination,
+  malformed dates, and insufficient comparison data.
+- Schedule variable failures and partial writes are reported instead of
+  appearing successful.
+- Job log regex and output sizes are bounded; MR diff truncation is explicit.
+- GitLab tools require explicit project scope unless the legacy fallback is
+  explicitly enabled.
+
 ## [0.5.4] — 2026-10-30
 
 _Docs-only release: no change under `src/` behaviour._

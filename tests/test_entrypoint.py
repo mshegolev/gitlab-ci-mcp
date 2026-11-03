@@ -38,7 +38,7 @@ CORE_TOOLS = {
     "gitlab_get_file",
     "gitlab_project_info",
 }
-EXPECTED_TOOL_COUNT = 23
+EXPECTED_TOOL_COUNT = 24
 EXPECTED_RESOURCES = {"gitlab://project/info", "gitlab://project/ci-config"}
 
 
