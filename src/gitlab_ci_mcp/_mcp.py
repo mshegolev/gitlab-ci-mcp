@@ -73,7 +73,7 @@ async def app_lifespan(_app: FastMCP) -> AsyncIterator[dict[str, Any]]:
         logger.debug("gitlab_ci_mcp: shutdown — all python-gitlab sessions closed")
 
 
-mcp = FastMCP("gitlab_ci_mcp", lifespan=app_lifespan)
+mcp = FastMCP("gitlab_ci_mcp", lifespan=app_lifespan, stateless_http=True)
 
 
 def configure_project_path_schema() -> None:

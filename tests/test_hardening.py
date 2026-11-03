@@ -256,6 +256,88 @@ def test_app_shutdown_closes_cached_gitlab_sessions(monkeypatch: pytest.MonkeyPa
     assert not _mcp._managers
 
 
+@pytest.fixture
+def http_mcp_app():
+    from gitlab_ci_mcp._mcp import mcp
+    from gitlab_ci_mcp.http_auth import create_http_app
+
+    mcp._session_manager = None
+    app = create_http_app()
+    yield app
+    mcp._session_manager = None
+
+
+def test_http_app_rejects_unauthenticated_initialize_before_mcp(
+    monkeypatch: pytest.MonkeyPatch, http_mcp_app
+) -> None:
+    import asyncio
+
+    import httpx
+
+    monkeypatch.delenv("MCP_TRANSPORT", raising=False)
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "auth-test", "version": "1.0"},
+        },
+    }
+
+    async def post_without_pat():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=http_mcp_app), base_url="http://127.0.0.1:8000"
+        ) as client:
+            return await client.post("/mcp", json=payload)
+
+    response = asyncio.run(post_without_pat())
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "X-GitLab-Token header is required"}
+
+
+def test_http_app_accepts_pat_header_for_initialize_and_tool_list(
+    monkeypatch: pytest.MonkeyPatch, http_mcp_app
+) -> None:
+    import asyncio
+
+    import httpx
+
+    monkeypatch.setenv("MCP_GITLAB_UPDATE_CHECK_ENABLED", "false")
+    headers = {
+        "X-GitLab-Token": "test-personal-token",
+        "Accept": "application/json, text/event-stream",
+    }
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "auth-test", "version": "1.0"},
+        },
+    }
+    tools_list = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+
+    async def list_tools():
+        async with http_mcp_app.router.lifespan_context(http_mcp_app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=http_mcp_app), base_url="http://127.0.0.1:8000"
+            ) as client:
+                initialized = await client.post("/mcp", json=initialize, headers=headers)
+                listed = await client.post("/mcp", json=tools_list, headers=headers)
+                return initialized, listed
+
+    initialized, listed = asyncio.run(list_tools())
+
+    assert initialized.status_code == 200
+    assert listed.status_code == 200
+    assert "gitlab_ci_mcp_check_updates" in listed.text
+
+
 def test_update_tool_is_explicitly_registered() -> None:
     import asyncio
 

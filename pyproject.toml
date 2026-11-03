@@ -25,9 +25,10 @@ classifiers = [
     "Topic :: Software Development :: Version Control",
 ]
 dependencies = [
-    "mcp>=1.2,<2",
+    "mcp>=1.30,<2",
     "python-gitlab>=4.0",
     "urllib3>=2.0",
+    "uvicorn>=0.31,<1",
 ]
 
 [project.optional-dependencies]
