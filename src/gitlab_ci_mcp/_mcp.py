@@ -126,13 +126,18 @@ ProjectPath = Annotated[
 
 def _request_gitlab_token(ctx: Context | None) -> str:
     """Get the GitLab credential for this HTTP call or stdio process."""
-    if os.environ.get("MCP_TRANSPORT", "stdio").lower() == "streamable-http":
-        request = ctx.request_context.request if ctx is not None else None
-        headers = getattr(request, "headers", None)
-        token = headers.get("x-gitlab-token") if headers is not None else _http_request_token.get()
-        if not isinstance(token, str) or not token.strip():
+    request = ctx.request_context.request if ctx is not None else None
+    headers = getattr(request, "headers", None)
+    request_token = headers.get("x-gitlab-token") if headers is not None else None
+    scoped_token = request_token or _http_request_token.get()
+    http_mode = (
+        os.environ.get("MCP_TRANSPORT", "stdio").strip().lower() == "streamable-http"
+        or scoped_token is not None
+    )
+    if http_mode:
+        if not isinstance(scoped_token, str) or not scoped_token.strip():
             raise ValueError("X-GitLab-Token header is required for remote GitLab requests")
-        return token.strip()
+        return scoped_token.strip()
 
     token = os.environ.get("GITLAB_TOKEN")
     if not token:

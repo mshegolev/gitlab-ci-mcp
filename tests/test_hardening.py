@@ -1247,7 +1247,8 @@ def test_http_concurrent_users_keep_pat_scoped_to_each_tool_call(monkeypatch: py
 
     from gitlab_ci_mcp import _mcp
 
-    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.delenv("MCP_TRANSPORT", raising=False)
+    monkeypatch.setenv("GITLAB_TOKEN", "process-fallback-must-not-be-used")
     monkeypatch.setenv("GITLAB_ALLOW_DEFAULT_PROJECT", "false")
     monkeypatch.setenv("MCP_GITLAB_UPDATE_CHECK_ENABLED", "false")
     created = {}
