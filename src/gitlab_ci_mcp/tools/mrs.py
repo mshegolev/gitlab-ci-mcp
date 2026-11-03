@@ -158,6 +158,17 @@ def gitlab_get_merge_request_changes(
         ci = get_ci(project_path)
         mr = ci.project.mergerequests.get(mr_iid)
         changes = mr.changes()
+        raw_changes = changes.get("changes", [])
+        api_total = changes.get("count") or changes.get("changes_count")
+        overflow = changes.get("overflow")
+        truncated = changes.get("truncated")
+        api_truncated = (
+            overflow is True
+            or str(overflow).lower() in {"true", "1"}
+            or truncated is True
+            or str(truncated).lower() in {"true", "1"}
+            or (isinstance(api_total, str) and api_total.endswith("+"))
+        )
         files: list[FileChange] = [
             {
                 "old_path": change.get("old_path"),
@@ -166,14 +177,19 @@ def gitlab_get_merge_request_changes(
                 "renamed_file": change.get("renamed_file"),
                 "deleted_file": change.get("deleted_file"),
                 "diff": change.get("diff", "")[:2000],
+                "diff_truncated": len(change.get("diff", "")) > 2000,
             }
-            for change in changes.get("changes", [])
+            for change in raw_changes
         ]
         data: MRChangesOutput = {
             "mr_iid": mr_iid,
             "title": changes.get("title"),
             "files_count": len(files),
             "files": files,
+            "api_truncated": api_truncated,
+            "api_overflow": api_truncated,
+            "api_total_count": api_total,
+            "total_count": api_total if isinstance(api_total, int) else len(files),
         }
         return output.ok(data, formatters.mr_changes(data))  # type: ignore[return-value]
     except Exception as exc:

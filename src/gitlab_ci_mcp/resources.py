@@ -11,7 +11,10 @@ from gitlab_ci_mcp._mcp import get_ci, mcp, ts
 @mcp.resource(
     "gitlab://project/info",
     name="Project Info",
-    description="Metadata of the default project (GITLAB_PROJECT_PATH).",
+    description=(
+        "Metadata for the legacy default project. Requires "
+        "GITLAB_ALLOW_DEFAULT_PROJECT=true because resources cannot accept project_path."
+    ),
     mime_type="text/markdown",
 )
 def project_info_resource() -> str:
@@ -40,7 +43,10 @@ def project_info_resource() -> str:
 @mcp.resource(
     "gitlab://project/ci-config",
     name="CI Config",
-    description="Contents of .gitlab-ci.yml on the default branch.",
+    description=(
+        "Contents of .gitlab-ci.yml for the legacy default project. Requires "
+        "GITLAB_ALLOW_DEFAULT_PROJECT=true because resources cannot accept project_path."
+    ),
     mime_type="text/yaml",
 )
 def ci_config_resource() -> str:

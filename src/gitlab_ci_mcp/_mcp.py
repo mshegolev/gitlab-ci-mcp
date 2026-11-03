@@ -8,6 +8,7 @@ import from a module that also defines the entry point.
 from __future__ import annotations
 
 import logging
+import os
 import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -51,15 +52,42 @@ async def app_lifespan(_app: FastMCP) -> AsyncIterator[dict[str, Any]]:
 mcp = FastMCP("gitlab_ci_mcp", lifespan=app_lifespan)
 
 
+def configure_project_path_schema() -> None:
+    """Make the MCP input schema match strict or legacy scope behavior."""
+    allow_default = os.environ.get("GITLAB_ALLOW_DEFAULT_PROJECT", "").lower() in {"1", "true", "yes"}
+    for tool in mcp._tool_manager.list_tools():
+        schema = tool.parameters
+        properties = schema.get("properties", {})
+        project_schema = properties.get("project_path")
+        if project_schema is None:
+            continue
+        required = schema.setdefault("required", [])
+        if allow_default:
+            if "project_path" in required:
+                required.remove("project_path")
+            project_schema.pop("type", None)
+            project_schema["anyOf"] = [{"type": "string"}, {"type": "null"}]
+            project_schema["default"] = None
+        else:
+            if "project_path" not in required:
+                required.append("project_path")
+            project_schema.pop("anyOf", None)
+            project_schema.pop("default", None)
+            project_schema["type"] = "string"
+            project_schema["minLength"] = 1
+
+
 # ── Shared parameter annotation ─────────────────────────────────────────────
 
 ProjectPath = Annotated[
     str | None,
     Field(
         default=None,
+        min_length=1,
         description=(
-            "GitLab project path (e.g. 'my-org/my-repo'). When omitted, the "
-            "default from GITLAB_PROJECT_PATH env var is used."
+            "GitLab project path (e.g. 'my-org/my-repo'). Required by default. "
+            "For legacy deployments only, set GITLAB_ALLOW_DEFAULT_PROJECT=true "
+            "to use GITLAB_PROJECT_PATH when omitted."
         ),
     ),
 ]
@@ -71,12 +99,25 @@ ProjectPath = Annotated[
 def get_ci(project_path: str | None) -> GitLabCIManager:
     """Return a cached ``GitLabCIManager`` for the given project path.
 
-    ``None`` uses the default from env. Managers are cached per path so the
-    python-gitlab HTTP session is reused across tool calls.
+    ``None`` is rejected unless the explicit compatibility flag is enabled.
+    Managers are cached per path so the python-gitlab HTTP session is reused
+    across tool calls.
     """
-    key = project_path or ""
+    if project_path is not None and not project_path.strip():
+        raise ValueError("project_path must not be empty")
+    if project_path is None:
+        allow_default = os.environ.get("GITLAB_ALLOW_DEFAULT_PROJECT", "").lower() in {"1", "true", "yes"}
+        if not allow_default:
+            raise ValueError(
+                "project_path is required. Set GITLAB_ALLOW_DEFAULT_PROJECT=true only for legacy "
+                "GITLAB_PROJECT_PATH fallback."
+            )
+        project_path = os.environ.get("GITLAB_PROJECT_PATH")
+        if not project_path:
+            raise ValueError("GITLAB_PROJECT_PATH is required when compatibility fallback is enabled")
+    key = project_path
     if key not in _managers:
-        _managers[key] = GitLabCIManager(project_path=project_path or None)
+        _managers[key] = GitLabCIManager(project_path=project_path)
     return _managers[key]
 
 

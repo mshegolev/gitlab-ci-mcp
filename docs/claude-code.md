@@ -13,7 +13,7 @@ health CI/CD.
 | **Python ≥ 3.10** | `python3 --version` (обычно уже есть) |
 | **`uv` / `uvx`** | `brew install uv` (macOS) или `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | **GitLab Personal Access Token** | GitLab → **Edit profile** → **Access Tokens** → name `claude-code-mcp`, scope `api`, срок по вашей политике |
-| **Путь к default-проекту** | `namespace/project` из URL, например `my-org/my-repo` |
+| **Путь проекта** | `namespace/project` из URL; передаётся в каждом вызове GitLab tool |
 
 > **Self-hosted GitLab в корп-сети?** Проверьте что VPN поднят и `curl $GITLAB_URL/api/v4/version` работает из терминала. При необходимости см. раздел "Self-hosted" в основном README.
 
@@ -27,8 +27,13 @@ health CI/CD.
 claude mcp add gitlab uvx --from gitlab-ci-mcp gitlab-ci-mcp \
   --env GITLAB_URL=https://gitlab.example.com \
   --env GITLAB_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx \
-  --env GITLAB_PROJECT_PATH=my-org/my-repo
+  --env GITLAB_PROJECT_PATH=my-org/my-repo \
+  --env GITLAB_ALLOW_DEFAULT_PROJECT=true
 ```
+
+Это явно включает совместимость со старым default-проектом. В строгом режиме
+удалите обе переменные `GITLAB_PROJECT_PATH` и `GITLAB_ALLOW_DEFAULT_PROJECT`
+и передавайте `project_path` в каждом вызове.
 
 Флаги:
 
@@ -53,6 +58,7 @@ claude mcp add gitlab uvx --from gitlab-ci-mcp gitlab-ci-mcp \
         "GITLAB_URL": "https://gitlab.example.com",
         "GITLAB_TOKEN": "${GITLAB_TOKEN}",
         "GITLAB_PROJECT_PATH": "my-org/my-repo",
+        "GITLAB_ALLOW_DEFAULT_PROJECT": "true",
         "GITLAB_SSL_VERIFY": "true"
       }
     }
@@ -68,6 +74,12 @@ export GITLAB_TOKEN="glpat-xxxxxxxxxxxxxxxxxxxx"
 
 Для глобального применения положите тот же JSON в `~/.claude.json` в секцию
 `mcpServers`.
+
+Проверка обновлений выключена по умолчанию. Чтобы разрешить вызов
+`gitlab_ci_mcp_check_updates` с запросом к PyPI, задайте
+`MCP_GITLAB_UPDATE_CHECK_ENABLED=true`; чтобы отключить — `false` или удалите
+переменную. При отключённой проверке инструмент сообщает статус `disabled`
+и не обращается к сети.
 
 ## 2. Проверка
 
@@ -117,16 +129,16 @@ gitlab: uvx --from gitlab-ci-mcp gitlab-ci-mcp - ✓ Connected
 
 ## 4. Работа с несколькими проектами
 
-Default-проект задаётся через `GITLAB_PROJECT_PATH`. Для ad-hoc запросов по
-другому репо — передайте `project_path` в промпте:
+По умолчанию каждый GitLab tool требует явный `project_path`. Для запросов
+передайте путь проекта в промпте:
 
 ```
 покажи pipelines для проекта other-org/other-repo
 ```
 
-Каждый tool принимает опциональный параметр `project_path`, который
-переопределяет дефолт. Серверу по каждому `project_path` создаётся отдельная
-кешированная HTTP-сессия — повторные вызовы быстрые.
+Для старого поведения задайте одновременно `GITLAB_PROJECT_PATH` и
+`GITLAB_ALLOW_DEFAULT_PROJECT=true`. Сервер создаёт отдельную кешированную
+HTTP-сессию для каждого `project_path`.
 
 ## 5. Корпоративный self-hosted GitLab
 
@@ -166,6 +178,7 @@ uvx --from gitlab-ci-mcp gitlab-ci-mcp --help 2>&1 | head
 GITLAB_URL=https://gitlab.example.com \
 GITLAB_TOKEN=glpat-xxx \
 GITLAB_PROJECT_PATH=my-org/my-repo \
+GITLAB_ALLOW_DEFAULT_PROJECT=true \
 uvx --from gitlab-ci-mcp gitlab-ci-mcp
 ```
 
@@ -176,7 +189,7 @@ uvx --from gitlab-ci-mcp gitlab-ci-mcp
 
 ### `not found (HTTP 404)`
 
-- Проверьте `GITLAB_PROJECT_PATH` — это `namespace/project` **целиком**, не только project name
+- Проверьте переданный `project_path` (или `GITLAB_PROJECT_PATH` вместе с `GITLAB_ALLOW_DEFAULT_PROJECT=true`): `namespace/project` **целиком**, не только project name
 - Убедитесь что ваша учётка имеет доступ к проекту
 
 ### `SSL: CERTIFICATE_VERIFY_FAILED`

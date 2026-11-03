@@ -13,4 +13,5 @@ from gitlab_ci_mcp.tools import (  # noqa: F401
     pipelines,
     repo,
     schedules,
+    updates,
 )

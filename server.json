@@ -31,9 +31,23 @@
         },
         {
           "name": "GITLAB_PROJECT_PATH",
-          "description": "Default project path (e.g. my-org/my-repo); can be overridden per call",
+          "description": "Legacy default project path; only used when GITLAB_ALLOW_DEFAULT_PROJECT=true",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "GITLAB_ALLOW_DEFAULT_PROJECT",
+          "description": "Explicit compatibility opt-in for GITLAB_PROJECT_PATH fallback (true/false)",
+          "isRequired": false,
+          "format": "string",
+          "default": "false"
+        },
+        {
+          "name": "MCP_GITLAB_UPDATE_CHECK_ENABLED",
+          "description": "Enable the explicit PyPI update-check tool (true/false)",
+          "isRequired": false,
+          "format": "string",
+          "default": "false"
         },
         {
           "name": "GITLAB_SSL_VERIFY",

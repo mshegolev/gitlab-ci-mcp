@@ -51,14 +51,19 @@ class GitLabCIManager:
         Args:
             token: GitLab Personal Access Token. Falls back to ``GITLAB_TOKEN`` env.
             gitlab_url: Base URL of GitLab server. Falls back to ``GITLAB_URL`` env.
-            project_path: ``namespace/project`` path. Falls back to ``GITLAB_PROJECT_PATH`` env.
+            project_path: Explicit ``namespace/project`` path. Legacy env fallback requires opt-in.
             ssl_verify: Verify SSL certs. Falls back to ``GITLAB_SSL_VERIFY`` env (default ``true``).
             no_proxy_domains: Domains to add to ``NO_PROXY`` (e.g. self-hosted corp domains).
                 Falls back to comma-separated ``GITLAB_NO_PROXY_DOMAINS`` env.
         """
         token = token or os.environ.get("GITLAB_TOKEN")
         gitlab_url = gitlab_url or os.environ.get("GITLAB_URL")
-        project_path = project_path or os.environ.get("GITLAB_PROJECT_PATH")
+        if project_path is not None and not project_path.strip():
+            raise ValueError("project_path must not be empty")
+        if project_path is None:
+            allow_default = os.environ.get("GITLAB_ALLOW_DEFAULT_PROJECT", "").lower() in {"1", "true", "yes"}
+            if allow_default:
+                project_path = os.environ.get("GITLAB_PROJECT_PATH")
 
         if not token:
             raise ValueError("GitLab token is required (pass token= or set GITLAB_TOKEN env)")
@@ -66,8 +71,8 @@ class GitLabCIManager:
             raise ValueError("GitLab URL is required (pass gitlab_url= or set GITLAB_URL env)")
         if not project_path:
             raise ValueError(
-                "Default project path is required (pass project_path= or set GITLAB_PROJECT_PATH env). "
-                "Individual tools can still override it per call."
+                "project_path is required (pass it explicitly). For legacy fallback, set "
+                "GITLAB_ALLOW_DEFAULT_PROJECT=true and GITLAB_PROJECT_PATH."
             )
 
         if ssl_verify is None:
@@ -151,9 +156,46 @@ class GitLabCIManager:
             for job in jobs
         ]
 
-    def get_job_log(self, job_id: int) -> str:
+    def get_job_log_bounded(self, job_id: int, max_bytes: int = 2_000_000) -> tuple[str, bool, int, int]:
+        """Stream a trace into a fixed-size tail buffer.
+
+        The response is consumed in chunks so memory stays bounded while tail
+        behavior remains useful for large job logs.
+        """
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
         job = self.project.jobs.get(job_id)
-        return job.trace().decode("utf-8")
+        path = f"{job.manager.path}/{job.encoded_id}/trace"
+        response = self.gl.http_get(
+            path,
+            streamed=True,
+            raw=True,
+            timeout=30.0,
+            retry_transient_errors=False,
+        )
+        tail = bytearray()
+        bytes_read = 0
+        line_breaks = 0
+        last_byte: int | None = None
+        try:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                bytes_read += len(chunk)
+                line_breaks += chunk.count(b"\n")
+                last_byte = chunk[-1]
+                tail.extend(chunk)
+                if len(tail) > max_bytes:
+                    del tail[: len(tail) - max_bytes]
+        finally:
+            response.close()
+        truncated = bytes_read > len(tail)
+        total_lines = line_breaks + int(last_byte is not None and last_byte != ord("\n"))
+        return tail.decode("utf-8", errors="replace"), truncated, bytes_read, total_lines
+
+    def get_job_log(self, job_id: int) -> str:
+        """Return a bounded trace for callers using the historical string API."""
+        return self.get_job_log_bounded(job_id)[0]
 
     # ─── Schedules ───
 
@@ -165,9 +207,11 @@ class GitLabCIManager:
             variables: dict[str, str] = {}
             if hasattr(detail, "variables"):
                 try:
-                    variables = {v.key: v.value for v in detail.variables.list()}
-                except Exception:
-                    pass
+                    variables = {v.key: v.value for v in detail.variables.list(all=True)}
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"schedule {schedule.id} variables read failed ({type(exc).__name__})"
+                    ) from exc
             result.append(
                 ScheduleInfo(
                     id=schedule.id,
@@ -201,8 +245,18 @@ class GitLabCIManager:
                 "active": active,
             }
         )
-        for key, value in variables.items():
-            schedule.variables.create({"key": key, "value": value})
+        try:
+            for key, value in variables.items():
+                schedule.variables.create({"key": key, "value": value})
+        except Exception as exc:
+            try:
+                schedule.delete()
+                cleanup = "rollback succeeded"
+            except Exception as rollback_exc:
+                cleanup = f"rollback failed ({type(rollback_exc).__name__})"
+            raise RuntimeError(
+                f"schedule {schedule.id} variable create failed ({type(exc).__name__}); {cleanup}"
+            ) from exc
         return schedule.id
 
     def update_schedule(
@@ -215,6 +269,14 @@ class GitLabCIManager:
         variables: dict[str, str] | None = None,
     ) -> None:
         schedule = self.project.pipelineschedules.get(schedule_id)
+        old_variables = []
+        if variables is not None:
+            try:
+                old_variables = [(v.key, v.value) for v in schedule.variables.list(all=True)]
+            except Exception as exc:
+                raise RuntimeError(
+                    f"schedule {schedule_id} update failed during variable read ({type(exc).__name__})"
+                ) from exc
         if description is not None:
             schedule.description = description
         if cron is not None:
@@ -223,13 +285,43 @@ class GitLabCIManager:
             schedule.ref = ref
         if active is not None:
             schedule.active = active
-        schedule.save()
+        try:
+            schedule.save()
+        except Exception as exc:
+            raise RuntimeError(
+                f"schedule {schedule_id} update failed during schedule save ({type(exc).__name__}); "
+                "schedule fields may be partially updated"
+            ) from exc
 
         if variables is not None:
-            for var in schedule.variables.list():
-                var.delete()
-            for key, value in variables.items():
-                schedule.variables.create({"key": key, "value": value})
+            def restore_variables() -> str:
+                try:
+                    for variable in schedule.variables.list(all=True):
+                        variable.delete()
+                    for key, value in old_variables:
+                        schedule.variables.create({"key": key, "value": value})
+                    return "rollback succeeded"
+                except Exception as rollback_exc:
+                    return f"rollback failed ({type(rollback_exc).__name__})"
+
+            try:
+                for var in schedule.variables.list(all=True):
+                    var.delete()
+            except Exception as exc:
+                rollback = restore_variables()
+                raise RuntimeError(
+                    f"schedule {schedule_id} update failed during variable delete ({type(exc).__name__}); "
+                    f"schedule fields were saved; {rollback}"
+                ) from exc
+            try:
+                for key, value in variables.items():
+                    schedule.variables.create({"key": key, "value": value})
+            except Exception as exc:
+                rollback = restore_variables()
+                raise RuntimeError(
+                    f"schedule {schedule_id} variable update failed ({type(exc).__name__}); "
+                    f"schedule fields were saved; {rollback}"
+                ) from exc
 
     def delete_schedule(self, schedule_id: int) -> None:
         schedule = self.project.pipelineschedules.get(schedule_id)

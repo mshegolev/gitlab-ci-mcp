@@ -96,21 +96,38 @@ def job_log(d: dict) -> str:
         )
     else:
         header = f"# Job `{d['job_id']}` log — last {d['showing_last']} of {d['total_lines']} lines"
-    return f"{header}\n\n```\n{d['log']}\n```"
+    warnings = []
+    if d.get("truncated"):
+        warnings.append(f"Trace had {d.get('bytes_read', 0):,} bytes; showing a bounded tail window.")
+    if d.get("matches_truncated"):
+        warnings.append("Match limit reached; additional matches are omitted.")
+    if d.get("output_truncated"):
+        warnings.append("Log output was truncated to fit the response limit.")
+    warning_text = "\n\n".join(f"⚠ {warning}" for warning in warnings)
+    return f"{header}\n\n{warning_text + chr(10) if warning_text else ''}```\n{d['log']}\n```"
 
 
 def pipeline_health(d: dict) -> str:
     trend_icons = {"up": "↑", "down": "↓", "flat": "="}
     trend = trend_icons.get(d["trend"], d["trend"])
+    rate_7d = "N/A" if d["rate_7d"] is None else f"{d['rate_7d']:.1f}%"
+    rate_30d = "N/A" if d["rate_30d"] is None else f"{d['rate_30d']:.1f}%"
     last = " ".join(d["last_10_statuses"]) if d["last_10_statuses"] else "—"
     return "\n".join(
         [
             f"# Pipeline health — `{d['project']}` · `{d['ref']}` · {d['source']}",
+            f"Status: **{d.get('status', 'ok')}**"
+            + (
+                f" (invalid timestamps: {d.get('invalid_timestamps', 0)})"
+                if d.get("invalid_timestamps")
+                else ""
+            ),
             "",
             "| Period | Success rate | Pipelines |",
             "| --- | --- | --- |",
-            f"| Last 7d  | {d['rate_7d']:.1f}% {trend} | {d['success_7d']}/{d['total_7d']} (failed {d['failed_7d']}) |",
-            f"| Last 30d | {d['rate_30d']:.1f}%   | {d['success_30d']}/{d['total_30d']} (failed {d['failed_30d']}) |",
+            f"| Last 7d  | {rate_7d} {trend} | {d['success_7d']}/{d.get('completed_7d', d['total_7d'])} completed |",
+            f"| Last 30d | {rate_30d} | {d['success_30d']}/{d.get('completed_30d', d['total_30d'])} completed |",
+            f"Rate basis: {d.get('rate_basis', 'success / completed pipelines')}.",
             "",
             f"**Last 10 statuses** (newest first): {last}",
             "",
@@ -244,9 +261,12 @@ def mr_changes(d: dict) -> str:
     lines = [
         f"# Changes of MR !{d['mr_iid']}" + (f" — {d['title']}" if d.get("title") else ""),
         "",
-        f"Changed files: **{d['files_count']}**.",
+        f"Changed files: **{d['files_count']}**."
+        + (f" API total: **{d['api_total_count']}**." if d.get("api_total_count") is not None else ""),
         "",
     ]
+    if d.get("api_truncated"):
+        lines.append("⚠ GitLab API response was truncated/overflowed; file list is incomplete.")
     for f in d["files"]:
         flag = (
             "NEW"
@@ -256,7 +276,7 @@ def mr_changes(d: dict) -> str:
         lines.append(f"## [{flag}] `{f.get('new_path') or f.get('old_path')}`")
         lines.append("")
         lines.append("```diff")
-        lines.append(f.get("diff") or "")
+        lines.append((f.get("diff") or "") + ("\n[diff truncated]" if f.get("diff_truncated") else ""))
         lines.append("```")
         lines.append("")
     return "\n".join(lines)

@@ -27,6 +27,7 @@ def _env(monkeypatch):
     monkeypatch.setenv("GITLAB_URL", GITLAB_URL)
     monkeypatch.setenv("GITLAB_TOKEN", "glpat-dummy")
     monkeypatch.setenv("GITLAB_PROJECT_PATH", PROJECT_PATH)
+    monkeypatch.setenv("GITLAB_ALLOW_DEFAULT_PROJECT", "true")
     monkeypatch.setenv("GITLAB_SSL_VERIFY", "false")
     # Import late so env is applied before module init code runs.
     from gitlab_ci_mcp import _mcp

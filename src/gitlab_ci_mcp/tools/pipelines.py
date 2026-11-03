@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
+import subprocess
+import sys
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import Context
@@ -21,6 +24,54 @@ from gitlab_ci_mcp.models import (
     PipelinesListOutput,
     PipelineSummary,
 )
+
+_MAX_JOB_LOG_BYTES = 2_000_000
+_MAX_JOB_LOG_OUTPUT_BYTES = 256_000
+_MAX_GREP_MATCHES = 1_000
+_REGEX_TIMEOUT_SECONDS = 1.0
+
+
+def _regex_match_indexes(
+    pattern: str,
+    lines: list[str],
+    timeout: float = _REGEX_TIMEOUT_SECONDS,
+    max_matches: int = _MAX_GREP_MATCHES,
+) -> tuple[list[int], bool]:
+    """Run untrusted regex work in a killable subprocess with a hard deadline."""
+    worker = (
+        "import json,re,sys; p=json.load(sys.stdin); r=re.compile(p['pattern']); "
+        "m=[]; "
+        "\nfor i,line in enumerate(p['lines']):\n"
+        " if r.search(line):\n"
+        "  m.append(i)\n"
+        "  if len(m)>p['max_matches']: break\n"
+        "json.dump(m,sys.stdout)"
+    )
+    payload = json.dumps({"pattern": pattern, "lines": lines, "max_matches": max_matches})
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", worker],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=True,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"grep_pattern timed out after {timeout:g} seconds") from exc
+    indexes = json.loads(completed.stdout)
+    truncated = len(indexes) > max_matches
+    return indexes[:max_matches], truncated
+
+
+def _bounded_log_output(lines: list[str], max_bytes: int = _MAX_JOB_LOG_OUTPUT_BYTES) -> tuple[str, bool]:
+    raw = "\n".join(lines).encode("utf-8")
+    if len(raw) <= max_bytes:
+        return raw.decode("utf-8"), False
+    marker = b"\n[output truncated; showing tail]"
+    budget = max(0, max_bytes - len(marker))
+    tail = raw[-budget:] if budget else b""
+    return tail.decode("utf-8", errors="replace") + marker.decode(), True
 
 PipelineStatus = Literal[
     "created", "waiting_for_resource", "preparing", "pending", "running",
@@ -245,18 +296,27 @@ async def gitlab_get_job_log(
             hint = f"grep={grep_pattern!r}" if grep_pattern else f"tail={tail}"
             await ctx.info(f"Fetching log of job {job_id} ({hint})")
         ci = await asyncio.to_thread(get_ci, project_path)
-        log = await asyncio.to_thread(ci.get_job_log, job_id)
+        log, source_truncated, bytes_read, total = await asyncio.to_thread(
+            ci.get_job_log_bounded, job_id, _MAX_JOB_LOG_BYTES
+        )
         lines = log.splitlines()
-        total = len(lines)
 
         matched_count: int | None = None
+        matches_truncated = False
+        output_truncated = source_truncated
         if grep_pattern:
             try:
-                regex = re.compile(grep_pattern)
-                matches = [i for i, line in enumerate(lines) if regex.search(line)]
+                re.compile(grep_pattern)
+                matches, matches_truncated = await asyncio.to_thread(_regex_match_indexes, grep_pattern, lines)
             except re.error:
                 needle = grep_pattern
-                matches = [i for i, line in enumerate(lines) if needle in line]
+                matches = []
+                for i, line in enumerate(lines):
+                    if needle in line:
+                        matches.append(i)
+                        if len(matches) > _MAX_GREP_MATCHES:
+                            break
+                matches_truncated = len(matches) > _MAX_GREP_MATCHES
             matched_count = len(matches)
             keep: set[int] = set()
             for i in matches:
@@ -266,15 +326,22 @@ async def gitlab_get_job_log(
         elif tail and tail < total:
             lines = lines[-tail:]
 
+        log_output, response_truncated = _bounded_log_output(lines)
+        output_truncated = output_truncated or matches_truncated or response_truncated
+
         data: JobLogOutput = {
             "job_id": job_id,
             "total_lines": total,
             "showing_last": len(lines),
-            "log": "\n".join(lines),
+            "log": log_output,
         }
         if grep_pattern:
             data["grep_pattern"] = grep_pattern
             data["grep_matches"] = matched_count or 0
+        data["truncated"] = source_truncated
+        data["bytes_read"] = bytes_read
+        data["matches_truncated"] = matches_truncated
+        data["output_truncated"] = output_truncated
         return output.ok(data, formatters.job_log(data))  # type: ignore[return-value]
     except Exception as exc:
         output.fail(exc, f"getting log of job {job_id}")
@@ -461,17 +528,23 @@ async def gitlab_pipeline_health(
             "project": ci.project_path,
             "ref": ref,
             "source": source,
-            "rate_7d": round(report.rate_7d, 1),
-            "rate_30d": round(report.rate_30d, 1),
+            "rate_7d": round(report.rate_7d, 1) if report.rate_7d is not None else None,
+            "rate_30d": round(report.rate_30d, 1) if report.rate_30d is not None else None,
             "trend": report.trend,
             "total_7d": report.total_7d,
+            "completed_7d": report.completed_7d,
             "success_7d": report.success_7d,
             "failed_7d": report.failed_7d,
             "total_30d": report.total_30d,
+            "completed_30d": report.completed_30d,
             "success_30d": report.success_30d,
             "failed_30d": report.failed_30d,
             "last_10_statuses": report.last_10_statuses,
             "generated_at": report.generated_at,
+            "status": report.status,
+            "invalid_timestamps": report.invalid_timestamps,
+            "insufficient_data": report.insufficient_data,
+            "rate_basis": report.rate_basis,
         }
         return output.ok(data, formatters.pipeline_health(data))  # type: ignore[return-value]
     except Exception as exc:

@@ -8,7 +8,7 @@ everything with the shared server.
 
 Design highlights:
 
-* 23 tools, 2 resources, all with input validation (Pydantic ``Field``
+* 24 tools, 2 resources, all with input validation (Pydantic ``Field``
   constraints), ``structured_output=True`` + a TypedDict return
   annotation, and tool annotations (``readOnlyHint`` /
   ``destructiveHint`` / ``idempotentHint`` / ``openWorldHint``).
@@ -30,7 +30,9 @@ from __future__ import annotations
 # notebooks, other packages) that want a single entry point.
 from gitlab_ci_mcp import resources as _resources  # noqa: F401
 from gitlab_ci_mcp import tools as _tools  # noqa: F401
-from gitlab_ci_mcp._mcp import app_lifespan, mcp
+from gitlab_ci_mcp._mcp import app_lifespan, configure_project_path_schema, mcp
+
+configure_project_path_schema()
 
 
 def main() -> None:
