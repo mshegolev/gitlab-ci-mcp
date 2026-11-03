@@ -7,8 +7,6 @@ import pytest
 
 def test_import() -> None:
     """Package and all submodules import cleanly."""
-    from importlib.metadata import version
-
     import gitlab_ci_mcp
     import gitlab_ci_mcp._mcp  # noqa: F401
     import gitlab_ci_mcp.ci_manager  # noqa: F401
@@ -21,7 +19,7 @@ def test_import() -> None:
     import gitlab_ci_mcp.server  # noqa: F401
     import gitlab_ci_mcp.tools  # noqa: F401
 
-    assert gitlab_ci_mcp.__version__ == version("gitlab-ci-mcp")
+    assert gitlab_ci_mcp.__version__ == "0.5.5"
 
 
 def _get_tools() -> list:
