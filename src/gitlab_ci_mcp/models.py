@@ -94,6 +94,34 @@ class JobLogOutput(TypedDict, total=False):
     output_truncated: bool
 
 
+class JobArtifactEntry(TypedDict):
+    path: str
+    size: int | None
+    type: str
+
+
+class JobArtifactsListOutput(TypedDict):
+    project: str
+    job_id: int
+    count: int
+    artifacts: list[JobArtifactEntry]
+    source: str
+    unsafe_entries_omitted: int
+
+
+class JobArtifactReadOutput(TypedDict):
+    project: str
+    job_id: int
+    artifact_path: str
+    status: str
+    content: str | None
+    size: int | None
+    bytes_returned: int
+    truncated: bool
+    content_type: str | None
+    message: str | None
+
+
 class HealthOutput(TypedDict):
     project: str
     ref: str

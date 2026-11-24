@@ -19,7 +19,7 @@ def test_import() -> None:
     import gitlab_ci_mcp.server  # noqa: F401
     import gitlab_ci_mcp.tools  # noqa: F401
 
-    assert gitlab_ci_mcp.__version__ == "0.5.5"
+    assert gitlab_ci_mcp.__version__ == "0.5.6"
 
 
 def _get_tools() -> list:
@@ -39,6 +39,8 @@ EXPECTED_TOOLS = {
     "gitlab_get_pipeline",
     "gitlab_get_pipeline_jobs",
     "gitlab_get_job_log",
+    "gitlab_list_job_artifacts",
+    "gitlab_get_job_artifact",
     "gitlab_trigger_pipeline",
     "gitlab_retry_pipeline",
     "gitlab_cancel_pipeline",
@@ -84,7 +86,7 @@ def test_all_tools_registered() -> None:
 
 
 def test_every_tool_has_output_schema() -> None:
-    """Each of the 23 tools must advertise outputSchema for MCP clients."""
+    """Each tool must advertise outputSchema for MCP clients."""
     tools = _get_tools()
     missing = [t.name for t in tools if getattr(t, "output_schema", None) is None]
     assert not missing, f"Tools without outputSchema: {missing}"
@@ -114,6 +116,8 @@ def test_read_only_tools_are_marked() -> None:
         "gitlab_list_pipelines",
         "gitlab_get_pipeline",
         "gitlab_get_pipeline_jobs",
+        "gitlab_list_job_artifacts",
+        "gitlab_get_job_artifact",
         "gitlab_pipeline_health",
         "gitlab_list_schedules",
         "gitlab_list_branches",

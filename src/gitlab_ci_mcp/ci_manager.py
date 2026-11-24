@@ -4,13 +4,27 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
+import zipfile
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Any
+from urllib.parse import quote
 
 import gitlab
+import gitlab.exceptions as gle
 from gitlab.v4.objects import Project
 
+from gitlab_ci_mcp.errors import ArtifactOperationError
+
 logger = logging.getLogger(__name__)
+
+_MAX_JOB_ARTIFACT_ARCHIVE_BYTES = 128 * 1024 * 1024
+_MAX_JOB_ARTIFACT_READ_BYTES = 2_000_000
+_TEXT_ARTIFACT_EXTENSIONS = {
+    ".conf", ".csv", ".err", ".html", ".ini", ".js", ".json", ".jsonl", ".log",
+    ".md", ".out", ".properties", ".text", ".ts", ".txt", ".xml", ".yaml", ".yml",
+}
 
 
 @dataclass
@@ -196,6 +210,198 @@ class GitLabCIManager:
     def get_job_log(self, job_id: int) -> str:
         """Return a bounded trace for callers using the historical string API."""
         return self.get_job_log_bounded(job_id)[0]
+
+    @staticmethod
+    def _validate_artifact_path(artifact_path: str) -> list[str]:
+        if not isinstance(artifact_path, str) or not artifact_path or "\\" in artifact_path or "\x00" in artifact_path:
+            raise ValueError("artifact_path must be a safe relative artifact path")
+        parts = artifact_path.split("/")
+        if (
+            artifact_path.startswith("/")
+            or (len(parts[0]) >= 2 and parts[0][0].isalpha() and parts[0][1] == ":")
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise ValueError("artifact_path must be a safe relative artifact path")
+        return parts
+
+    def _get_job_for_artifacts(self, job_id: int) -> Any:
+        if not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0:
+            raise ValueError("job_id must be a positive integer")
+        return self.project.jobs.get(job_id)
+
+    def _artifact_api_path(self, job_id: int, suffix: str = "") -> str:
+        return f"/projects/{self.project.id}/jobs/{job_id}/artifacts{suffix}"
+
+    def _download_artifacts_archive(self, job_id: int, job: Any) -> bytes:
+        try:
+            response = self.gl.http_get(
+                self._artifact_api_path(job_id),
+                streamed=True,
+                raw=True,
+                timeout=30.0,
+                retry_transient_errors=False,
+            )
+        except gle.GitlabError as exc:
+            if getattr(exc, "response_code", None) == 404:
+                metadata = getattr(job, "artifacts_file", None)
+                if metadata:
+                    raise ArtifactOperationError(
+                        f"Artifacts archive for job {job_id} is unavailable or expired (GitLab returned 404)."
+                    ) from exc
+                raise ArtifactOperationError(f"Job {job_id} has no downloadable artifacts archive.") from exc
+            raise
+
+        try:
+            declared_size = response.headers.get("Content-Length")
+            if declared_size and int(declared_size) > _MAX_JOB_ARTIFACT_ARCHIVE_BYTES:
+                raise ArtifactOperationError(
+                    f"Artifacts archive exceeds the {_MAX_JOB_ARTIFACT_ARCHIVE_BYTES}-byte listing limit."
+                )
+            archive = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                if len(archive) + len(chunk) > _MAX_JOB_ARTIFACT_ARCHIVE_BYTES:
+                    raise ArtifactOperationError(
+                        f"Artifacts archive exceeds the {_MAX_JOB_ARTIFACT_ARCHIVE_BYTES}-byte listing limit."
+                    )
+                archive.extend(chunk)
+            return bytes(archive)
+        finally:
+            response.close()
+
+    def list_job_artifacts(self, job_id: int) -> dict[str, Any]:
+        """List artifact paths and sizes using the GitLab tree API or a bounded ZIP fallback."""
+        job = self._get_job_for_artifacts(job_id)
+        try:
+            entries = self.gl.http_list(
+                self._artifact_api_path(job_id, "/tree"),
+                query_data={"recursive": True},
+                iterator=True,
+                per_page=100,
+            )
+            result: list[dict[str, Any]] = []
+            unsafe_entries_omitted = 0
+            for entry in entries:
+                path = entry.get("path")
+                entry_type = entry.get("type")
+                if not isinstance(path, str) or entry_type not in {"file", "directory"}:
+                    continue
+                clean_path = path[:-1] if entry_type == "directory" and path.endswith("/") else path
+                try:
+                    self._validate_artifact_path(clean_path)
+                except ValueError:
+                    unsafe_entries_omitted += 1
+                    continue
+                size = entry.get("size") if entry_type == "file" else None
+                result.append(
+                    {"path": path, "size": size if isinstance(size, int) and size >= 0 else None, "type": entry_type}
+                )
+            return {"artifacts": result, "source": "tree_api", "unsafe_entries_omitted": unsafe_entries_omitted}
+        except gle.GitlabError as exc:
+            if getattr(exc, "response_code", None) != 404:
+                raise
+
+        archive_data = self._download_artifacts_archive(job_id, job)
+        try:
+            with zipfile.ZipFile(BytesIO(archive_data)) as archive:
+                result = []
+                unsafe_entries_omitted = 0
+                for entry in archive.infolist():
+                    path = entry.filename
+                    if entry.is_dir():
+                        clean_path = path.rstrip("/")
+                        entry_type = "directory"
+                        size = None
+                    else:
+                        clean_path = path
+                        entry_type = "file"
+                        size = entry.file_size
+                    try:
+                        self._validate_artifact_path(clean_path)
+                    except ValueError:
+                        unsafe_entries_omitted += 1
+                        continue
+                    mode = entry.external_attr >> 16
+                    if stat.S_ISLNK(mode):
+                        continue
+                    result.append({"path": path, "size": size, "type": entry_type})
+                return {"artifacts": result, "source": "zip_archive", "unsafe_entries_omitted": unsafe_entries_omitted}
+        except zipfile.BadZipFile as exc:
+            raise ArtifactOperationError(f"Artifacts archive for job {job_id} is not a valid ZIP archive.") from exc
+
+    def get_job_artifact(self, job_id: int, artifact_path: str, max_bytes: int = 1_000_000) -> dict[str, Any]:
+        """Read one bounded UTF-8 text artifact without extracting it to disk."""
+        self._validate_artifact_path(artifact_path)
+        if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
+            raise ValueError("max_bytes must be a positive integer")
+        max_bytes = min(max_bytes, _MAX_JOB_ARTIFACT_READ_BYTES)
+        self._get_job_for_artifacts(job_id)
+        endpoint_path = "/".join(quote(part, safe="") for part in artifact_path.split("/"))
+        response = self.gl.http_get(
+            self._artifact_api_path(job_id, f"/{endpoint_path}"),
+            streamed=True,
+            raw=True,
+            timeout=30.0,
+            retry_transient_errors=False,
+        )
+        try:
+            declared_size = response.headers.get("Content-Length")
+            total_size = int(declared_size) if declared_size and declared_size.isdigit() else None
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() or None
+            prefix = bytearray()
+            bytes_seen = 0
+            limit_hit = False
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                bytes_seen += len(chunk)
+                room = max_bytes - len(prefix)
+                if room > 0:
+                    prefix.extend(chunk[:room])
+                if len(chunk) > room:
+                    limit_hit = True
+            if total_size is None:
+                total_size = bytes_seen
+            truncated = limit_hit or total_size > len(prefix)
+            basename = artifact_path.rsplit("/", 1)[-1]
+            extension = "." + basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
+            text_mime = bool(content_type and (content_type.startswith("text/") or content_type in {
+                "application/json", "application/ld+json", "application/xml", "application/yaml", "application/x-yaml",
+            }))
+            if not text_mime and extension not in _TEXT_ARTIFACT_EXTENSIONS:
+                return {
+                    "status": "binary", "content": None, "size": total_size, "bytes_returned": 0,
+                    "truncated": truncated, "content_type": content_type,
+                    "message": "Artifact is not a supported text format; content was not returned.",
+                }
+            if b"\x00" in prefix:
+                return {
+                    "status": "binary", "content": None, "size": total_size, "bytes_returned": 0,
+                    "truncated": truncated, "content_type": content_type,
+                    "message": "Artifact contains binary data; content was not returned.",
+                }
+            while prefix:
+                try:
+                    content = prefix.decode("utf-8", errors="strict")
+                    break
+                except UnicodeDecodeError as exc:
+                    if not truncated or exc.reason != "unexpected end of data" or exc.end != len(prefix):
+                        return {
+                            "status": "invalid_utf8", "content": None, "size": total_size, "bytes_returned": 0,
+                            "truncated": truncated, "content_type": content_type,
+                            "message": "Artifact is not valid UTF-8; content was not returned.",
+                        }
+                    del prefix[exc.start:]
+                    truncated = True
+            else:
+                content = ""
+            return {
+                "status": "ok", "content": content, "size": total_size, "bytes_returned": len(prefix),
+                "truncated": truncated, "content_type": content_type, "message": None,
+            }
+        finally:
+            response.close()
 
     # ─── Schedules ───
 

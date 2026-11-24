@@ -37,10 +37,10 @@ wrap `python-gitlab` calls with `asyncio.to_thread`.
 
 ## Features
 
-24 tools covering the everyday CI/CD surface:
+26 tools covering the everyday CI/CD surface:
 
 **Pipelines**
-`gitlab_list_pipelines` · `gitlab_get_pipeline` · `gitlab_get_pipeline_jobs` · `gitlab_get_job_log` · `gitlab_trigger_pipeline` · `gitlab_retry_pipeline` · `gitlab_cancel_pipeline` · `gitlab_pipeline_health`
+`gitlab_list_pipelines` · `gitlab_get_pipeline` · `gitlab_get_pipeline_jobs` · `gitlab_get_job_log` · `gitlab_list_job_artifacts` · `gitlab_get_job_artifact` · `gitlab_trigger_pipeline` · `gitlab_retry_pipeline` · `gitlab_cancel_pipeline` · `gitlab_pipeline_health`
 
 **Schedules**
 `gitlab_list_schedules` · `gitlab_create_schedule` · `gitlab_update_schedule` · `gitlab_delete_schedule`
@@ -56,6 +56,14 @@ wrap `python-gitlab` calls with `asyncio.to_thread`.
 
 **Package**
 `gitlab_ci_mcp_check_updates`
+
+### Inspecting job artifacts
+
+Use `gitlab_list_job_artifacts` to discover files for a job, then
+`gitlab_get_job_artifact` to read a selected UTF-8 text file. Responses are
+bounded (1 MB by default, 2 MB maximum); binary and invalid UTF-8 files return
+metadata without file contents. Older GitLab instances without the artifacts
+tree endpoint use a ZIP listing fallback capped at 128 MB.
 
 ### Pipeline health report
 

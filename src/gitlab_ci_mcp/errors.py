@@ -5,6 +5,10 @@ from __future__ import annotations
 import gitlab.exceptions as gle
 
 
+class ArtifactOperationError(Exception):
+    """Expected artifact handling failure safe to show to the MCP caller."""
+
+
 def _rate_limited(action: str) -> str:
     return (
         f"Error: rate-limited (HTTP 429) while {action}. "
@@ -29,6 +33,9 @@ def handle(exc: Exception, action: str) -> str:
     The goal is that the agent sees *why* the call failed and *what it could
     do about it* without needing to inspect the Python traceback.
     """
+    if isinstance(exc, ArtifactOperationError):
+        return f"Error: {exc}"
+
     if isinstance(exc, gle.GitlabAuthenticationError):
         return (
             f"Error: GitLab authentication failed while {action}. "
@@ -44,6 +51,16 @@ def handle(exc: Exception, action: str) -> str:
         return _rate_limited(action)
     if isinstance(code, int) and 500 <= code < 600:
         return _server_error(code, action, exc)
+    if code == 403:
+        return (
+            f"Error: forbidden (HTTP 403) while {action}. "
+            "The configured GitLab identity cannot read this project resource."
+        )
+    if code == 404 and isinstance(exc, gle.GitlabError):
+        return (
+            f"Error: resource not found or unavailable (HTTP 404) while {action}. "
+            "Check the project, job, artifact path, and retention status."
+        )
 
     if isinstance(exc, gle.GitlabGetError):
         if code == 404:

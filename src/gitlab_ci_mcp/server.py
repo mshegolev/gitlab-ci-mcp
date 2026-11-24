@@ -8,7 +8,7 @@ everything with the shared server.
 
 Design highlights:
 
-* 24 tools, 2 resources, all with input validation (Pydantic ``Field``
+* 26 tools, 2 resources, all with input validation (Pydantic ``Field``
   constraints), ``structured_output=True`` + a TypedDict return
   annotation, and tool annotations (``readOnlyHint`` /
   ``destructiveHint`` / ``idempotentHint`` / ``openWorldHint``).
@@ -18,8 +18,8 @@ Design highlights:
 * Errors raised as ``ToolError`` carrying actionable messages produced
   by :mod:`gitlab_ci_mcp.errors` (401 / 403 / 404 / 429 / 5xx /
   ``ValueError`` all mapped to next-step hints).
-* ``gitlab_pipeline_health`` and ``gitlab_get_job_log`` are async and
-  emit ``ctx.info`` / ``ctx.report_progress`` events.
+* ``gitlab_pipeline_health`` and ``gitlab_get_job_log`` are async and emit
+  progress events; job artifact tools are async and emit ``ctx.info`` events.
 * Lifespan closes cached ``python-gitlab`` HTTP sessions on shutdown.
 """
 

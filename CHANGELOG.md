@@ -3,7 +3,14 @@
 All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.5.6] — 2026-11-25
+
+### Added
+- Read-only `gitlab_list_job_artifacts` and `gitlab_get_job_artifact` tools for
+  inspecting one job's artifact archive. Listing uses the GitLab artifacts tree
+  endpoint when available and a bounded, in-memory ZIP fallback otherwise;
+  file reads return only supported UTF-8 text with explicit size and truncation
+  metadata.
 
 ## [0.5.5] — 2026-11-03
 
