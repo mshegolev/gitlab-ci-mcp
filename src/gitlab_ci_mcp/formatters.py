@@ -314,6 +314,32 @@ def file_content(d: dict) -> str:
     )
 
 
+def job_artifacts(d: dict) -> str:
+    lines = [
+        f"# Artifacts for job `{d['job_id']}` in `{d['project']}`",
+        "",
+        f"Listing source: `{d['source']}`",
+        "| Type | Size | Path |",
+        "| --- | ---: | --- |",
+    ]
+    for entry in d["artifacts"]:
+        size = f"{entry['size']} B" if entry.get("size") is not None else "—"
+        lines.append(f"| {entry['type']} | {size} | `{entry['path']}` |")
+    if not d["artifacts"]:
+        lines.append("| — | — | No artifacts found |")
+    if d["unsafe_entries_omitted"]:
+        lines.extend(["", f"Omitted {d['unsafe_entries_omitted']} unsafe archive path(s)."])
+    return "\n".join(lines)
+
+
+def job_artifact(d: dict) -> str:
+    head = f"# Artifact `{d['artifact_path']}` from job `{d['job_id']}` — {d['status']}"
+    if d.get("message"):
+        return f"{head}\n\n{d['message']}"
+    marker = " (truncated)" if d.get("truncated") else ""
+    return f"{head}\n\n{d['bytes_returned']} of {d['size']} bytes{marker}\n\n```\n{d['content']}\n```"
+
+
 def compare(d: dict) -> str:
     lines = [
         f"# Compare `{d['source']}` → `{d['target']}`",

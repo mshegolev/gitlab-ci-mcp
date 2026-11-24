@@ -17,6 +17,8 @@ from gitlab_ci_mcp import formatters, output, pagination
 from gitlab_ci_mcp._mcp import ProjectPath, get_ci, mcp, ts
 from gitlab_ci_mcp.models import (
     HealthOutput,
+    JobArtifactReadOutput,
+    JobArtifactsListOutput,
     JobLogOutput,
     JobsListOutput,
     PipelineActionResult,
@@ -367,6 +369,83 @@ async def gitlab_get_job_log(
         return output.ok(data, formatters.job_log(data))  # type: ignore[return-value]
     except Exception as exc:
         output.fail(exc, f"getting log of job {job_id}")
+
+
+@mcp.tool(
+    name="gitlab_list_job_artifacts",
+    annotations={
+        "title": "List Job Artifacts",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+    structured_output=True,
+)
+async def gitlab_list_job_artifacts(
+    job_id: Annotated[int, Field(description="Positive numeric GitLab job ID.", gt=0)],
+    project_path: ProjectPath = None,
+    ctx: Context | None = None,
+) -> JobArtifactsListOutput:
+    """List relative paths, types, and sizes of files in one job's artifacts archive."""
+    try:
+        if ctx:
+            await ctx.info(f"Listing artifacts for job {job_id}")
+        ci = await asyncio.to_thread(get_ci, project_path, ctx=ctx)
+        listing = await asyncio.to_thread(ci.list_job_artifacts, job_id)
+        entries = listing["artifacts"]
+        data: JobArtifactsListOutput = {
+            "project": ci.project_path,
+            "job_id": job_id,
+            "count": len(entries),
+            "artifacts": entries,
+            "source": listing["source"],
+            "unsafe_entries_omitted": listing["unsafe_entries_omitted"],
+        }
+        return output.ok(data, formatters.job_artifacts(data))  # type: ignore[return-value]
+    except Exception as exc:
+        output.fail(exc, f"listing artifacts for job {job_id}")
+
+
+@mcp.tool(
+    name="gitlab_get_job_artifact",
+    annotations={
+        "title": "Get Job Artifact",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+    structured_output=True,
+)
+async def gitlab_get_job_artifact(
+    job_id: Annotated[int, Field(description="Positive numeric GitLab job ID.", gt=0)],
+    artifact_path: Annotated[
+        str,
+        Field(description="Safe relative file path inside the job artifacts archive.", min_length=1, max_length=1024),
+    ],
+    max_bytes: Annotated[
+        int,
+        Field(default=1_000_000, ge=1, le=2_000_000, description="Maximum UTF-8 response bytes (1–2,000,000)."),
+    ] = 1_000_000,
+    project_path: ProjectPath = None,
+    ctx: Context | None = None,
+) -> JobArtifactReadOutput:
+    """Read one UTF-8 text file from a job archive with a bounded response."""
+    try:
+        if ctx:
+            await ctx.info(f"Reading artifact {artifact_path!r} from job {job_id}")
+        ci = await asyncio.to_thread(get_ci, project_path, ctx=ctx)
+        result = await asyncio.to_thread(ci.get_job_artifact, job_id, artifact_path, max_bytes)
+        data: JobArtifactReadOutput = {
+            "project": ci.project_path,
+            "job_id": job_id,
+            "artifact_path": artifact_path,
+            **result,
+        }
+        return output.ok(data, formatters.job_artifact(data))  # type: ignore[return-value]
+    except Exception as exc:
+        output.fail(exc, f"reading artifact {artifact_path!r} from job {job_id}")
 
 
 @mcp.tool(

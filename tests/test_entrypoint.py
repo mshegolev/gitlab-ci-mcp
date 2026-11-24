@@ -33,12 +33,14 @@ CORE_TOOLS = {
     "gitlab_list_pipelines",
     "gitlab_get_pipeline",
     "gitlab_get_job_log",
+    "gitlab_list_job_artifacts",
+    "gitlab_get_job_artifact",
     "gitlab_pipeline_health",
     "gitlab_list_merge_requests",
     "gitlab_get_file",
     "gitlab_project_info",
 }
-EXPECTED_TOOL_COUNT = 24
+EXPECTED_TOOL_COUNT = 26
 EXPECTED_RESOURCES = {"gitlab://project/info", "gitlab://project/ci-config"}
 
 
