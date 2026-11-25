@@ -3,6 +3,14 @@
 All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use [SemVer](https://semver.org/).
 
+## [0.5.7] — 2026-11-25
+
+### Fixed
+- Retry incomplete job artifact tree or ZIP responses once from the beginning,
+  discard partial results, and return bounded errors for repeated interruptions.
+- Bound the complete artifact-list MCP response and normalize timeout, malformed
+  archive metadata, corrupt ZIP, and oversized inventory outcomes.
+
 ## [0.5.6] — 2026-11-25
 
 ### Added

@@ -6,12 +6,12 @@
     "url": "https://github.com/mshegolev/gitlab-ci-mcp",
     "source": "github"
   },
-  "version": "0.5.5",
+  "version": "0.5.7",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "gitlab-ci-mcp",
-      "version": "0.5.5",
+      "version": "0.5.7",
       "transport": {
         "type": "stdio"
       },
