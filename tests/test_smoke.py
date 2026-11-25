@@ -19,7 +19,7 @@ def test_import() -> None:
     import gitlab_ci_mcp.server  # noqa: F401
     import gitlab_ci_mcp.tools  # noqa: F401
 
-    assert gitlab_ci_mcp.__version__ == "0.5.6"
+    assert gitlab_ci_mcp.__version__ == "0.5.7"
 
 
 def _get_tools() -> list:
