@@ -105,6 +105,27 @@ All config is via environment variables:
 | `MCP_GITLAB_UPDATE_CHECK_ENABLED` | no | `false` by default; set to `true` to allow the explicit update-check tool to query PyPI |
 | `GITLAB_SSL_VERIFY` | no | `true` (default) / `false` |
 | `GITLAB_NO_PROXY_DOMAINS` | no | Comma-separated domains to add to `NO_PROXY` (useful in corp networks behind a local HTTP proxy — e.g. `.corp.example.com,gitlab.internal`) |
+| `GITLAB_DISABLED_TOOL_GROUPS` | no | Comma-separated groups to omit from the advertised tool list; unset or blank keeps all groups |
+
+`GITLAB_DISABLED_TOOL_GROUPS` accepts these stable group IDs and tool memberships:
+
+| Group ID | Tools |
+| --- | --- |
+| `pipelines` | `gitlab_list_pipelines`, `gitlab_get_pipeline`, `gitlab_get_pipeline_jobs`, `gitlab_get_job_log`, `gitlab_list_job_artifacts`, `gitlab_get_job_artifact`, `gitlab_trigger_pipeline`, `gitlab_retry_pipeline`, `gitlab_cancel_pipeline`, `gitlab_pipeline_health` |
+| `schedules` | `gitlab_list_schedules`, `gitlab_create_schedule`, `gitlab_update_schedule`, `gitlab_delete_schedule` |
+| `branches_tags` | `gitlab_list_branches`, `gitlab_list_tags`, `gitlab_compare_branches` |
+| `merge_requests` | `gitlab_list_merge_requests`, `gitlab_get_merge_request`, `gitlab_get_merge_request_changes`, `gitlab_create_merge_request`, `gitlab_merge_mr` |
+| `repository` | `gitlab_get_file`, `gitlab_list_repository_tree`, `gitlab_project_info` |
+| `package` | `gitlab_ci_mcp_check_updates` |
+
+Group names are trimmed around commas; empty elements and duplicates are
+ignored. Unknown IDs fail startup with a configuration error. All six groups
+may be disabled, which starts the server with zero advertised tools. For
+example, to omit pipeline and repository operations:
+
+```bash
+GITLAB_DISABLED_TOOL_GROUPS="pipelines, repository" gitlab-ci-mcp
+```
 
 Every tool accepts a `project_path` arg. It is required by default so a call
 cannot silently target an environment-wide project. For legacy deployments,
