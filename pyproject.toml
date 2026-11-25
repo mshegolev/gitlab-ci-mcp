@@ -27,6 +27,7 @@ classifiers = [
 dependencies = [
     "mcp>=1.30,<2",
     "python-gitlab>=4.0",
+    "requests>=2.25,<3",
     "urllib3>=2.0",
     "uvicorn>=0.31,<1",
 ]

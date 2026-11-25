@@ -5,8 +5,11 @@ import io
 import urllib.parse
 import zipfile
 
+import gitlab.exceptions as gle
 import pytest
+import requests
 import responses
+from urllib3.exceptions import ReadTimeoutError
 
 from gitlab_ci_mcp.ci_manager import GitLabCIManager
 
@@ -76,6 +79,269 @@ def test_list_job_artifacts_uses_tree_api(manager: GitLabCIManager) -> None:
         "unsafe_entries_omitted": 0,
     }
     assert "glpat-test-secret" not in repr(result)
+
+
+def test_list_job_artifacts_retries_chunked_tree_from_the_beginning(manager, monkeypatch) -> None:
+    calls = 0
+
+    def http_list(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield {"path": "partial.txt", "type": "file", "size": 7}
+            raise requests.exceptions.ChunkedEncodingError("incomplete response")
+        yield {"path": "complete.txt", "type": "file", "size": 8}
+
+    monkeypatch.setattr(manager, "_get_job_for_artifacts", lambda job_id: object())
+    monkeypatch.setattr(manager, "_artifact_api_path", lambda job_id, suffix="": f"/jobs/{job_id}{suffix}")
+    monkeypatch.setattr(manager.gl, "http_list", http_list)
+
+    result = manager.list_job_artifacts(JOB_ID)
+
+    assert calls == 2
+    assert result["artifacts"] == [{"path": "complete.txt", "size": 8, "type": "file"}]
+
+
+def test_list_job_artifacts_repeated_chunked_tree_fails_without_partial_result(manager, monkeypatch) -> None:
+    calls = 0
+
+    def http_list(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        yield {"path": "partial.txt", "type": "file", "size": 7}
+        raise requests.exceptions.ChunkedEncodingError("incomplete response")
+
+    monkeypatch.setattr(manager, "_get_job_for_artifacts", lambda job_id: object())
+    monkeypatch.setattr(manager, "_artifact_api_path", lambda job_id, suffix="": f"/jobs/{job_id}{suffix}")
+    monkeypatch.setattr(manager.gl, "http_list", http_list)
+
+    from gitlab_ci_mcp.errors import ArtifactOperationError
+
+    with pytest.raises(ArtifactOperationError, match="incomplete"):
+        manager.list_job_artifacts(JOB_ID)
+    assert calls == 2
+
+
+def test_list_job_artifacts_retries_interrupted_zip_and_closes_each_response(manager, monkeypatch) -> None:
+    archive_bytes = _zip_bytes({"complete.txt": b"ok"})
+    responses_seen = []
+
+    class StreamResponse:
+        headers = {"Content-Length": str(len(archive_bytes))}
+
+        def __init__(self, interrupted: bool):
+            self.interrupted = interrupted
+            self.closed = False
+
+        def iter_content(self, chunk_size):
+            if self.interrupted:
+                yield b"PK\x03\x04partial"
+                raise requests.exceptions.ChunkedEncodingError("incomplete ZIP response")
+            yield archive_bytes
+
+        def close(self):
+            self.closed = True
+
+    def http_list(*args, **kwargs):
+        raise gle.GitlabGetError("not found", response_code=404)
+
+    def http_get(*args, **kwargs):
+        response = StreamResponse(interrupted=not responses_seen)
+        responses_seen.append(response)
+        return response
+
+    monkeypatch.setattr(manager, "_get_job_for_artifacts", lambda job_id: object())
+    monkeypatch.setattr(manager, "_artifact_api_path", lambda job_id, suffix="": f"/jobs/{job_id}{suffix}")
+    monkeypatch.setattr(manager.gl, "http_list", http_list)
+    monkeypatch.setattr(manager.gl, "http_get", http_get)
+
+    result = manager.list_job_artifacts(JOB_ID)
+
+    assert result["source"] == "zip_archive"
+    assert result["artifacts"] == [{"path": "complete.txt", "size": 2, "type": "file"}]
+    assert len(responses_seen) == 2
+    assert all(response.closed for response in responses_seen)
+
+
+def test_list_job_artifacts_does_not_retry_forbidden_tree(manager, monkeypatch) -> None:
+    calls = 0
+
+    def http_list(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise gle.GitlabGetError("forbidden", response_code=403)
+
+    monkeypatch.setattr(manager, "_get_job_for_artifacts", lambda job_id: object())
+    monkeypatch.setattr(manager, "_artifact_api_path", lambda job_id, suffix="": f"/jobs/{job_id}{suffix}")
+    monkeypatch.setattr(manager.gl, "http_list", http_list)
+
+    with pytest.raises(gle.GitlabGetError):
+        manager.list_job_artifacts(JOB_ID)
+    assert calls == 1
+
+
+def test_list_job_artifacts_rejects_inventory_over_output_limit(manager, monkeypatch) -> None:
+    from gitlab_ci_mcp.errors import ArtifactOperationError
+
+    def http_list(*args, **kwargs):
+        yield {"path": "x" * 256_001, "type": "file", "size": 1}
+
+    monkeypatch.setattr(manager, "_get_job_for_artifacts", lambda job_id: object())
+    monkeypatch.setattr(manager, "_artifact_api_path", lambda job_id, suffix="": f"/jobs/{job_id}{suffix}")
+    monkeypatch.setattr(manager.gl, "http_list", http_list)
+
+    with pytest.raises(ArtifactOperationError, match="listing limit"):
+        manager.list_job_artifacts(JOB_ID)
+
+
+def test_list_job_artifacts_reports_corrupt_zip(manager, monkeypatch) -> None:
+    from gitlab_ci_mcp.errors import ArtifactOperationError
+
+    class StreamResponse:
+        headers = {"Content-Length": "7"}
+
+        def iter_content(self, chunk_size):
+            yield b"not zip"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(manager, "_get_job_for_artifacts", lambda job_id: object())
+    monkeypatch.setattr(manager, "_artifact_api_path", lambda job_id, suffix="": f"/jobs/{job_id}{suffix}")
+    monkeypatch.setattr(
+        manager.gl,
+        "http_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(gle.GitlabGetError("not found", response_code=404)),
+    )
+    monkeypatch.setattr(manager.gl, "http_get", lambda *args, **kwargs: StreamResponse())
+
+    with pytest.raises(ArtifactOperationError, match="not a valid ZIP"):
+        manager.list_job_artifacts(JOB_ID)
+
+
+def test_list_job_artifacts_reports_timeout_without_retry(manager, monkeypatch) -> None:
+    calls = 0
+
+    def http_list(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise requests.Timeout("timeout detail")
+
+    monkeypatch.setattr(manager, "_get_job_for_artifacts", lambda job_id: object())
+    monkeypatch.setattr(manager, "_artifact_api_path", lambda job_id, suffix="": f"/jobs/{job_id}{suffix}")
+    monkeypatch.setattr(manager.gl, "http_list", http_list)
+
+    from gitlab_ci_mcp.errors import ArtifactOperationError
+
+    with pytest.raises(ArtifactOperationError, match="timed out") as exc:
+        manager.list_job_artifacts(JOB_ID)
+    assert calls == 1
+    assert "timeout detail" not in str(exc.value)
+
+
+def test_list_job_artifacts_normalizes_stream_read_timeout_without_retry(manager, monkeypatch) -> None:
+    calls = 0
+
+    def http_list(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise requests.ConnectionError(ReadTimeoutError(None, None, "private timeout detail"))
+
+    monkeypatch.setattr(manager, "_get_job_for_artifacts", lambda job_id: object())
+    monkeypatch.setattr(manager, "_artifact_api_path", lambda job_id, suffix="": f"/jobs/{job_id}{suffix}")
+    monkeypatch.setattr(manager.gl, "http_list", http_list)
+
+    from gitlab_ci_mcp.errors import ArtifactOperationError
+
+    with pytest.raises(ArtifactOperationError, match="timed out") as exc:
+        manager.list_job_artifacts(JOB_ID)
+    assert calls == 1
+    assert "private timeout detail" not in str(exc.value)
+
+
+def test_list_job_artifacts_rejects_oversized_archive_and_closes_response(manager, monkeypatch) -> None:
+    import gitlab.exceptions as gle
+
+    from gitlab_ci_mcp.ci_manager import _MAX_JOB_ARTIFACT_ARCHIVE_BYTES
+    from gitlab_ci_mcp.errors import ArtifactOperationError
+
+    class StreamResponse:
+        headers = {"Content-Length": str(_MAX_JOB_ARTIFACT_ARCHIVE_BYTES + 1)}
+        closed = False
+
+        def iter_content(self, chunk_size):
+            raise AssertionError("oversized archive must be rejected before reading")
+
+        def close(self):
+            self.closed = True
+
+    response = StreamResponse()
+    monkeypatch.setattr(manager, "_get_job_for_artifacts", lambda job_id: object())
+    monkeypatch.setattr(manager, "_artifact_api_path", lambda job_id, suffix="": f"/jobs/{job_id}{suffix}")
+    monkeypatch.setattr(
+        manager.gl,
+        "http_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(gle.GitlabGetError("not found", response_code=404)),
+    )
+    monkeypatch.setattr(manager.gl, "http_get", lambda *args, **kwargs: response)
+
+    with pytest.raises(ArtifactOperationError, match="archive exceeds"):
+        manager.list_job_artifacts(JOB_ID)
+    assert response.closed is True
+
+
+def test_list_job_artifacts_rejects_malformed_archive_size_header(manager, monkeypatch) -> None:
+    import gitlab.exceptions as gle
+
+    from gitlab_ci_mcp.errors import ArtifactOperationError
+
+    class StreamResponse:
+        headers = {"Content-Length": "unknown"}
+        closed = False
+
+        def iter_content(self, chunk_size):
+            raise AssertionError("malformed size header must fail before reading")
+
+        def close(self):
+            self.closed = True
+
+    response = StreamResponse()
+    monkeypatch.setattr(manager, "_get_job_for_artifacts", lambda job_id: object())
+    monkeypatch.setattr(manager, "_artifact_api_path", lambda job_id, suffix="": f"/jobs/{job_id}{suffix}")
+    monkeypatch.setattr(
+        manager.gl,
+        "http_list",
+        lambda *args, **kwargs: (_ for _ in ()).throw(gle.GitlabGetError("not found", response_code=404)),
+    )
+    monkeypatch.setattr(manager.gl, "http_get", lambda *args, **kwargs: response)
+
+    with pytest.raises(ArtifactOperationError, match="invalid size header"):
+        manager.list_job_artifacts(JOB_ID)
+    assert response.closed is True
+
+
+def test_list_job_artifacts_caps_the_complete_mcp_response(monkeypatch) -> None:
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from gitlab_ci_mcp.tools import pipelines
+
+    class FakeManager:
+        project_path = PROJECT_PATH
+
+        def list_job_artifacts(self, job_id):
+            return {
+                "artifacts": [
+                    {"path": f"reports/{index:04d}-{'x' * 115}.json", "size": 10, "type": "file"}
+                    for index in range(1_500)
+                ],
+                "source": "tree_api",
+                "unsafe_entries_omitted": 0,
+            }
+
+    monkeypatch.setattr(pipelines, "get_ci", lambda project_path, ctx=None: FakeManager())
+
+    with pytest.raises(ToolError, match="response.*listing limit"):
+        asyncio.run(pipelines.gitlab_list_job_artifacts(job_id=JOB_ID, project_path=PROJECT_PATH))
 
 
 @responses.activate

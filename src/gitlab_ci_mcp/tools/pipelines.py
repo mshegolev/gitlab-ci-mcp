@@ -15,6 +15,8 @@ from pydantic import Field
 
 from gitlab_ci_mcp import formatters, output, pagination
 from gitlab_ci_mcp._mcp import ProjectPath, get_ci, mcp, ts
+from gitlab_ci_mcp.ci_manager import MAX_JOB_ARTIFACT_LIST_BYTES
+from gitlab_ci_mcp.errors import ArtifactOperationError
 from gitlab_ci_mcp.models import (
     HealthOutput,
     JobArtifactReadOutput,
@@ -402,7 +404,17 @@ async def gitlab_list_job_artifacts(
             "source": listing["source"],
             "unsafe_entries_omitted": listing["unsafe_entries_omitted"],
         }
-        return output.ok(data, formatters.job_artifacts(data))  # type: ignore[return-value]
+        markdown = formatters.job_artifacts(data)
+        encoded_response = json.dumps(
+            {"structuredContent": data, "content": [{"type": "text", "text": markdown}]},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(encoded_response) > MAX_JOB_ARTIFACT_LIST_BYTES:
+            raise ArtifactOperationError(
+                f"Artifact response for job {job_id} exceeds the {MAX_JOB_ARTIFACT_LIST_BYTES}-byte listing limit."
+            )
+        return output.ok(data, markdown)  # type: ignore[return-value]
     except Exception as exc:
         output.fail(exc, f"listing artifacts for job {job_id}")
 

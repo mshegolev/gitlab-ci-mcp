@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import stat
@@ -13,13 +14,16 @@ from urllib.parse import quote
 
 import gitlab
 import gitlab.exceptions as gle
+import requests
 from gitlab.v4.objects import Project
+from urllib3.exceptions import ReadTimeoutError
 
 from gitlab_ci_mcp.errors import ArtifactOperationError
 
 logger = logging.getLogger(__name__)
 
 _MAX_JOB_ARTIFACT_ARCHIVE_BYTES = 128 * 1024 * 1024
+MAX_JOB_ARTIFACT_LIST_BYTES = 256_000
 _MAX_JOB_ARTIFACT_READ_BYTES = 2_000_000
 _TEXT_ARTIFACT_EXTENSIONS = {
     ".conf", ".csv", ".err", ".html", ".ini", ".js", ".json", ".jsonl", ".log",
@@ -253,10 +257,13 @@ class GitLabCIManager:
 
         try:
             declared_size = response.headers.get("Content-Length")
-            if declared_size and int(declared_size) > _MAX_JOB_ARTIFACT_ARCHIVE_BYTES:
-                raise ArtifactOperationError(
-                    f"Artifacts archive exceeds the {_MAX_JOB_ARTIFACT_ARCHIVE_BYTES}-byte listing limit."
-                )
+            if declared_size:
+                if not declared_size.isdigit():
+                    raise ArtifactOperationError(f"Artifacts archive for job {job_id} has an invalid size header.")
+                if int(declared_size) > _MAX_JOB_ARTIFACT_ARCHIVE_BYTES:
+                    raise ArtifactOperationError(
+                        f"Artifacts archive exceeds the {_MAX_JOB_ARTIFACT_ARCHIVE_BYTES}-byte listing limit."
+                    )
             archive = bytearray()
             for chunk in response.iter_content(chunk_size=64 * 1024):
                 if not chunk:
@@ -273,6 +280,27 @@ class GitLabCIManager:
     def list_job_artifacts(self, job_id: int) -> dict[str, Any]:
         """List artifact paths and sizes using the GitLab tree API or a bounded ZIP fallback."""
         job = self._get_job_for_artifacts(job_id)
+        for attempt in range(2):
+            try:
+                return self._list_job_artifacts_once(job_id, job)
+            except requests.exceptions.ChunkedEncodingError as exc:
+                if attempt == 0:
+                    continue
+                raise ArtifactOperationError(
+                    f"Artifact listing for job {job_id} was interrupted twice by an incomplete response."
+                ) from exc
+            except requests.exceptions.Timeout as exc:
+                raise ArtifactOperationError(
+                    f"Artifact listing for job {job_id} timed out while reading the response."
+                ) from exc
+            except requests.exceptions.ConnectionError as exc:
+                timed_out = any(isinstance(arg, ReadTimeoutError) for arg in exc.args)
+                message = "timed out while reading the response" if timed_out else "failed while reading the response"
+                raise ArtifactOperationError(f"Artifact listing for job {job_id} {message}.") from exc
+
+        raise AssertionError("unreachable")
+
+    def _list_job_artifacts_once(self, job_id: int, job: Any) -> dict[str, Any]:
         try:
             entries = self.gl.http_list(
                 self._artifact_api_path(job_id, "/tree"),
@@ -282,6 +310,7 @@ class GitLabCIManager:
             )
             result: list[dict[str, Any]] = []
             unsafe_entries_omitted = 0
+            encoded_artifacts_size = len(b'{"artifacts":[')
             for entry in entries:
                 path = entry.get("path")
                 entry_type = entry.get("type")
@@ -294,9 +323,18 @@ class GitLabCIManager:
                     unsafe_entries_omitted += 1
                     continue
                 size = entry.get("size") if entry_type == "file" else None
-                result.append(
-                    {"path": path, "size": size if isinstance(size, int) and size >= 0 else None, "type": entry_type}
+                artifact = {
+                    "path": path,
+                    "size": size if isinstance(size, int) and size >= 0 else None,
+                    "type": entry_type,
+                }
+                encoded_artifacts_size += (1 if result else 0) + len(
+                    json.dumps(artifact, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                 )
+                self._ensure_artifact_listing_bounded(
+                    encoded_artifacts_size, "tree_api", unsafe_entries_omitted, job_id
+                )
+                result.append(artifact)
             return {"artifacts": result, "source": "tree_api", "unsafe_entries_omitted": unsafe_entries_omitted}
         except gle.GitlabError as exc:
             if getattr(exc, "response_code", None) != 404:
@@ -307,6 +345,7 @@ class GitLabCIManager:
             with zipfile.ZipFile(BytesIO(archive_data)) as archive:
                 result = []
                 unsafe_entries_omitted = 0
+                encoded_artifacts_size = len(b'{"artifacts":[')
                 for entry in archive.infolist():
                     path = entry.filename
                     if entry.is_dir():
@@ -325,10 +364,29 @@ class GitLabCIManager:
                     mode = entry.external_attr >> 16
                     if stat.S_ISLNK(mode):
                         continue
-                    result.append({"path": path, "size": size, "type": entry_type})
+                    artifact = {"path": path, "size": size, "type": entry_type}
+                    encoded_artifacts_size += (1 if result else 0) + len(
+                        json.dumps(artifact, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                    )
+                    self._ensure_artifact_listing_bounded(
+                        encoded_artifacts_size, "zip_archive", unsafe_entries_omitted, job_id
+                    )
+                    result.append(artifact)
                 return {"artifacts": result, "source": "zip_archive", "unsafe_entries_omitted": unsafe_entries_omitted}
-        except zipfile.BadZipFile as exc:
+        except (zipfile.BadZipFile, EOFError) as exc:
             raise ArtifactOperationError(f"Artifacts archive for job {job_id} is not a valid ZIP archive.") from exc
+
+    @staticmethod
+    def _ensure_artifact_listing_bounded(
+        encoded_artifacts_size: int, source: str, unsafe_entries_omitted: int, job_id: int
+    ) -> None:
+        encoded_size = encoded_artifacts_size + len(
+            f'],"source":{json.dumps(source)},"unsafe_entries_omitted":{unsafe_entries_omitted}}}'.encode()
+        )
+        if encoded_size > MAX_JOB_ARTIFACT_LIST_BYTES:
+            raise ArtifactOperationError(
+                f"Artifact inventory for job {job_id} exceeds the {MAX_JOB_ARTIFACT_LIST_BYTES}-byte listing limit."
+            )
 
     def get_job_artifact(self, job_id: int, artifact_path: str, max_bytes: int = 1_000_000) -> dict[str, Any]:
         """Read one bounded UTF-8 text artifact without extracting it to disk."""
