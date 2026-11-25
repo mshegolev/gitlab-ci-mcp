@@ -3,7 +3,7 @@ title: 'Fix incomplete job artifact listings'
 type: 'bugfix'
 ticket: '1'
 created: '2026-11-25'
-status: 'built'
+status: done
 baseline_revision: '8edbf91e34442a44d729bcf43778ed52c97af585'
 route: 'full'
 route_source: 'auto'
