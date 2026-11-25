@@ -1,0 +1,11 @@
+[[entry]]
+id = 1
+type = "story"
+title = "Lint candidate and repository CI configurations"
+description = "An engineer can lint supplied YAML or a project configuration at a ref, inspect bounded diagnostics and resolved jobs/configuration, and tell static validation from opt-in simulation."
+verify = "An invalid candidate returns lint diagnostics, a valid candidate returns bounded resolved output through MCP, and neither request creates a pipeline or executes a job."
+covers = ["R1"]
+after = ["1.1"]
+hitl = false
+risk = "high"
+refine = true

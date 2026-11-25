@@ -11,7 +11,7 @@ slug = "epic-ci-config-lint"
 title = "CI configuration lint and simulation"
 description = "An engineer can validate a candidate or repository CI configuration and inspect bounded diagnostics and generated configuration without starting a pipeline."
 covers = ["R2"]
-after = [{ epic = 1, needs = "R1's local tests plus successful installation from the worktree folder and MCP verification before R2 starts; the increments also share manager/tool registration points" }]
+after = [{ epic = 1, needs = "R1's local tests, folder installation, and MCP verification are complete" }]
 
 [[epic]]
 id = 3

@@ -8,6 +8,7 @@ sources: ["_bmad-output/initiative-gitlab-pipeline-analysis/initiative-gitlab-pi
 companions: []
 after: []
 refined: true
+status: done
 risk: high
 ---
 
@@ -31,7 +32,6 @@ An engineer can distinguish a job with no downloadable archive from a failed or 
 - Missing archive, permission denial, missing job, incomplete transfer, and corrupt archive have distinguishable bounded outcomes; retry is finite and limited to the confirmed transient response failure.
 - The existing selected-file reader retains its bounded UTF-8 behavior and safety checks.
 - After local tests pass, a package installed from this worktree folder into an isolated environment exposes and passes verification for the artifact tools.
-- This increment is included in the single reviewed package release after R1–R6 are complete.
 
 ## Constraints
 
