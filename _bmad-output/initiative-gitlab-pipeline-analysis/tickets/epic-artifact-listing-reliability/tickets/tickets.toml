@@ -1,0 +1,10 @@
+[[entry]]
+id = 1
+type = "bug"
+title = "Fix incomplete job artifact listings"
+description = "When GitLab truncates an artifact listing response, the MCP returns a complete inventory after a bounded retry or a precise error instead of a partial success."
+verify = "Run the focused artifact failure tests and the repository suite; then install this worktree locally and verify both artifact tools are exposed and functional against the test transport."
+covers = ["R1"]
+after = []
+hitl = false
+risk = "high"

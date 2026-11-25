@@ -1,0 +1,22 @@
+[[epic]]
+id = 1
+slug = "epic-artifact-listing-reliability"
+title = "Reliable job artifact listing"
+description = "A job's artifact inventory is complete or fails explicitly; incomplete transport is never reported as an empty or partial success."
+covers = ["R1"]
+
+[[epic]]
+id = 2
+slug = "epic-ci-config-lint"
+title = "CI configuration lint and simulation"
+description = "An engineer can validate a candidate or repository CI configuration and inspect bounded diagnostics and generated configuration without starting a pipeline."
+covers = ["R2"]
+after = [{ epic = 1, needs = "R1's local tests, folder installation, and MCP verification are complete" }]
+
+[[epic]]
+id = 3
+slug = "epic-pipeline-deployment-diagnosis"
+title = "Pipeline and deployment diagnosis"
+description = "An engineer can inspect job/downstream failures, test reports, deployment history, and bounded log ranges using the shared read-only evidence model."
+covers = ["R3", "R4", "R5", "R6"]
+after = [{ epic = 2, needs = "the shared GitLab manager, typed output, and read-only tool registration integration used by this diagnosis epic" }]
