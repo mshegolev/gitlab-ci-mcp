@@ -33,7 +33,9 @@ def gitlab_list_schedules(project_path: ProjectPath = None, ctx: Context | None 
     Variable keys whose name hints at a secret (``TOKEN``, ``PASSWORD``,
     ``SECRET``, ``CREDENTIAL``, ``PRIVATE_KEY``, ``API_KEY``) keep the key
     but have the value replaced by ``***`` so the agent still sees which
-    variables exist.
+    variables exist. If GitLab omits the schedule's ``variables`` field, the
+    tool returns an actionable error with the GitLab version and permission/API
+    compatibility guidance instead of reporting an empty set.
 
     Examples:
         - "What schedules do we have and are they all active" → default call

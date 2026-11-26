@@ -362,7 +362,7 @@ def test_update_check_can_be_enabled_and_disabled(monkeypatch: pytest.MonkeyPatc
     disabled = updates.gitlab_ci_mcp_check_updates()
     assert disabled.structuredContent["status"] == "disabled"
 
-    expected = {"status": "current", "installed_version": "0.5.7", "cached": False}
+    expected = {"status": "current", "installed_version": "0.5.8", "cached": False}
     calls = []
     monkeypatch.setenv("MCP_GITLAB_UPDATE_CHECK_ENABLED", "true")
     monkeypatch.setattr(updates, "_check", lambda: calls.append(True) or expected)
@@ -528,7 +528,7 @@ def test_health_api_error_includes_request_failure_not_empty_report() -> None:
         PipelineHealthCollector(ci).collect()
 
 
-def test_schedule_variable_read_error_names_schedule_and_phase() -> None:
+def test_schedule_malformed_variables_name_schedule_without_echoing_values() -> None:
     from gitlab_ci_mcp.ci_manager import GitLabCIManager
 
     schedule = SimpleNamespace(
@@ -537,15 +537,21 @@ def test_schedule_variable_read_error_names_schedule_and_phase() -> None:
         cron="0 0 * * *",
         ref="main",
         active=True,
-        variables=SimpleNamespace(list=lambda **_kwargs: (_ for _ in ()).throw(OSError("offline"))),
+        attributes={"variables": [{"value": "SCHEDULE_SECRET"}]},
+        variables=SimpleNamespace(),
     )
     project = SimpleNamespace(
         pipelineschedules=SimpleNamespace(list=lambda **_kwargs: [schedule], get=lambda _schedule_id: schedule)
     )
     manager = SimpleNamespace(project=project, gitlab_url="https://gitlab.example", project_path="demo/repo")
 
-    with pytest.raises(RuntimeError, match="schedule 44 variables read failed"):
+    with pytest.raises(RuntimeError) as error:
         GitLabCIManager.list_schedules(manager)
+
+    assert "schedule 44" in str(error.value)
+    assert "variables" in str(error.value)
+    assert "response" in str(error.value).lower()
+    assert "SCHEDULE_SECRET" not in str(error.value)
 
 
 def test_schedule_create_rolls_back_and_names_partial_failure() -> None:
@@ -665,7 +671,8 @@ def test_schedule_without_variables_is_distinct_from_read_failure() -> None:
         cron="0 0 * * *",
         ref="main",
         active=True,
-        variables=SimpleNamespace(list=lambda **_kwargs: []),
+        attributes={"variables": []},
+        variables=SimpleNamespace(),
     )
     project = SimpleNamespace(
         pipelineschedules=SimpleNamespace(list=lambda **_kwargs: [schedule], get=lambda _id: schedule)
@@ -679,6 +686,167 @@ def test_schedule_without_variables_is_distinct_from_read_failure() -> None:
     result = GitLabCIManager.list_schedules(manager)
 
     assert result[0].variables == {}
+
+
+def test_schedule_reads_variables_from_attributes_without_version_lookup() -> None:
+    from gitlab_ci_mcp.ci_manager import GitLabCIManager
+
+    version_calls = 0
+
+    def get_version():
+        nonlocal version_calls
+        version_calls += 1
+        return ("19.6.1-ee", "revision")
+
+    schedule = SimpleNamespace(
+        id=46,
+        description="daily",
+        cron="0 0 * * *",
+        ref="main",
+        active=True,
+        attributes={"variables": [{"key": "NIGHTLY", "value": "1"}]},
+        variables=SimpleNamespace(),
+    )
+    project = SimpleNamespace(
+        pipelineschedules=SimpleNamespace(list=lambda **_kwargs: [schedule], get=lambda _id: schedule)
+    )
+    manager = SimpleNamespace(
+        project=project,
+        gl=SimpleNamespace(version=get_version),
+        gitlab_url="https://gitlab.example",
+        project_path="demo/repo",
+    )
+
+    result = GitLabCIManager.list_schedules(manager)
+
+    assert result[0].variables == {"NIGHTLY": "1"}
+    assert version_calls == 0
+
+
+def test_schedule_missing_variables_field_raises_with_version() -> None:
+    from gitlab_ci_mcp.ci_manager import GitLabCIManager
+
+    schedule = SimpleNamespace(
+        id=3495,
+        description="daily",
+        cron="0 0 * * *",
+        ref="main",
+        active=True,
+        attributes={},
+        variables=SimpleNamespace(),
+    )
+    project = SimpleNamespace(
+        pipelineschedules=SimpleNamespace(list=lambda **_kwargs: [schedule], get=lambda _schedule_id: schedule)
+    )
+    manager = SimpleNamespace(
+        project=project,
+        gl=SimpleNamespace(version=lambda: ("19.6.1-ee", "server-revision")),
+        gitlab_url="https://gitlab.example",
+        project_path="demo/repo",
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        GitLabCIManager.list_schedules(manager)
+
+    message = str(error.value)
+    assert "schedule 3495" in message
+    assert "variables" in message
+    assert "19.6.1-ee" in message
+    assert "Maintainer" in message or "Owner" in message or "ownership" in message
+    assert "server-revision" not in message
+
+
+def test_schedule_missing_variables_field_reports_unknown_version_on_lookup_failure() -> None:
+    from gitlab_ci_mcp.ci_manager import GitLabCIManager
+
+    def fail_version_lookup():
+        raise OSError("metadata unavailable")
+
+    schedule = SimpleNamespace(
+        id=47,
+        description="daily",
+        cron="0 0 * * *",
+        ref="main",
+        active=True,
+        attributes={},
+        variables=SimpleNamespace(),
+    )
+    project = SimpleNamespace(
+        pipelineschedules=SimpleNamespace(list=lambda **_kwargs: [schedule], get=lambda _id: schedule)
+    )
+    manager = SimpleNamespace(
+        project=project,
+        gl=SimpleNamespace(version=fail_version_lookup),
+        gitlab_url="https://gitlab.example",
+        project_path="demo/repo",
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        GitLabCIManager.list_schedules(manager)
+
+    message = str(error.value)
+    assert "schedule 47" in message
+    assert "version: unknown" in message.lower()
+    assert "metadata unavailable" not in message
+
+
+def test_schedule_tool_surfaces_missing_variables_error(monkeypatch) -> None:
+    import asyncio
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from gitlab_ci_mcp.ci_manager import GitLabCIManager
+    from gitlab_ci_mcp.server import mcp
+    from gitlab_ci_mcp.tools import schedules as schedule_tools
+
+    schedule = SimpleNamespace(
+        id=3495,
+        description="daily",
+        cron="0 0 * * *",
+        ref="main",
+        active=True,
+        attributes={"variables": [{"key": "TOKEN", "value": "SECRET_VALUE"}, {"key": "NIGHTLY", "value": "1"}]},
+        variables=SimpleNamespace(),
+    )
+    project = SimpleNamespace(
+        pipelineschedules=SimpleNamespace(list=lambda **_kwargs: [schedule], get=lambda _id: schedule)
+    )
+    manager = SimpleNamespace(
+        project=project,
+        gl=SimpleNamespace(version=lambda: ("19.6.1-ee", "revision")),
+        gitlab_url="https://gitlab.example",
+        project_path="demo/repo",
+    )
+    ci = SimpleNamespace(
+        project_path="demo/repo",
+        list_schedules=lambda: GitLabCIManager.list_schedules(manager),
+    )
+    monkeypatch.setattr(schedule_tools, "get_ci", lambda _path, **_kwargs: ci)
+
+    result = asyncio.run(
+        mcp._tool_manager.call_tool(
+            "gitlab_list_schedules",
+            {"project_path": "demo/repo"},
+            convert_result=True,
+        )
+    )
+
+    assert result.structuredContent["schedules"][0]["variables"] == {"TOKEN": "***", "NIGHTLY": "1"}
+    assert "SECRET_VALUE" not in result.content[0].text
+
+    schedule.attributes = {}
+    with pytest.raises(ToolError) as error:
+        asyncio.run(
+            mcp._tool_manager.call_tool(
+                "gitlab_list_schedules",
+                {"project_path": "demo/repo"},
+                convert_result=True,
+            )
+        )
+
+    assert "schedule 3495" in str(error.value)
+    assert "19.6.1-ee" in str(error.value)
+    assert "SECRET_VALUE" not in str(error.value)
 
 
 def test_merge_request_reports_file_and_api_diff_truncation(monkeypatch) -> None:

@@ -18,6 +18,7 @@ FastMCP server and listing its tools is pure in-process schema work.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from importlib.metadata import entry_points
@@ -42,6 +43,78 @@ CORE_TOOLS = {
 }
 EXPECTED_TOOL_COUNT = 26
 EXPECTED_RESOURCES = {"gitlab://project/info", "gitlab://project/ci-config"}
+
+GROUP_TOOLS = {
+    "pipelines": {
+        "gitlab_list_pipelines", "gitlab_get_pipeline", "gitlab_get_pipeline_jobs", "gitlab_get_job_log",
+        "gitlab_list_job_artifacts", "gitlab_get_job_artifact", "gitlab_trigger_pipeline", "gitlab_retry_pipeline",
+        "gitlab_cancel_pipeline", "gitlab_pipeline_health",
+    },
+    "schedules": {
+        "gitlab_list_schedules", "gitlab_create_schedule", "gitlab_update_schedule", "gitlab_delete_schedule",
+    },
+    "branches_tags": {"gitlab_list_branches", "gitlab_list_tags", "gitlab_compare_branches"},
+    "merge_requests": {
+        "gitlab_list_merge_requests", "gitlab_get_merge_request", "gitlab_get_merge_request_changes",
+        "gitlab_create_merge_request", "gitlab_merge_mr",
+    },
+    "repository": {"gitlab_get_file", "gitlab_list_repository_tree", "gitlab_project_info"},
+    "package": {"gitlab_ci_mcp_check_updates"},
+}
+
+
+def _tool_names_in_subprocess(value: str | None) -> subprocess.CompletedProcess[str]:
+    """List tools in a fresh interpreter, isolating import-time registration."""
+    program = (
+        "import asyncio\n"
+        "from gitlab_ci_mcp.server import mcp\n"
+        "names = sorted(t.name for t in asyncio.run(mcp.list_tools()))\n"
+        "print('\\n'.join(names)) if names else None\n"
+    )
+    env = os.environ.copy()
+    if value is None:
+        env.pop("GITLAB_DISABLED_TOOL_GROUPS", None)
+    else:
+        env["GITLAB_DISABLED_TOOL_GROUPS"] = value
+    return subprocess.run([sys.executable, "-c", program], env=env, capture_output=True, text=True, timeout=120)
+
+
+def test_disabled_groups_default_and_normalization() -> None:
+    for value in (None, "", "   "):
+        proc = _tool_names_in_subprocess(value)
+        assert proc.returncode == 0, proc.stderr
+        assert len(proc.stdout.splitlines()) == EXPECTED_TOOL_COUNT
+
+    proc = _tool_names_in_subprocess(" , pipelines , , pipelines ")
+    assert proc.returncode == 0, proc.stderr
+    names = set(proc.stdout.splitlines())
+    assert not GROUP_TOOLS["pipelines"] & names
+    assert len(names) == EXPECTED_TOOL_COUNT - len(GROUP_TOOLS["pipelines"])
+
+
+@pytest.mark.parametrize("disabled", ["pipelines", "pipelines, repository"])
+def test_disabled_groups_are_absent_and_other_groups_remain(disabled: str) -> None:
+    proc = _tool_names_in_subprocess(disabled)
+    assert proc.returncode == 0, proc.stderr
+    names = set(proc.stdout.splitlines())
+    disabled_groups = {group.strip() for group in disabled.split(",")}
+    disabled_tools = set().union(*(GROUP_TOOLS[group] for group in disabled_groups))
+    assert not disabled_tools & names
+    expected = set().union(*(tools for group, tools in GROUP_TOOLS.items() if group not in disabled_groups))
+    assert names == expected
+
+
+def test_unknown_group_fails_before_startup() -> None:
+    proc = _tool_names_in_subprocess("pipelines,typo")
+    assert proc.returncode != 0
+    assert "GITLAB_DISABLED_TOOL_GROUPS" in proc.stderr
+    assert "typo" in proc.stderr
+
+
+def test_all_groups_can_be_disabled() -> None:
+    proc = _tool_names_in_subprocess(",".join(GROUP_TOOLS))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == ""
 
 
 def _console_script_entry_point():
