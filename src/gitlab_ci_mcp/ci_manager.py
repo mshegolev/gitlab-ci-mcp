@@ -468,14 +468,38 @@ class GitLabCIManager:
         result: list[ScheduleInfo] = []
         for schedule in schedules:
             detail = self.project.pipelineschedules.get(schedule.id)
-            variables: dict[str, str] = {}
-            if hasattr(detail, "variables"):
-                try:
-                    variables = {v.key: v.value for v in detail.variables.list(all=True)}
-                except Exception as exc:
+            try:
+                attributes = detail.attributes
+                if "variables" not in attributes:
+                    version = "unknown"
+                    try:
+                        server_version, _server_revision = self.gl.version()
+                        if server_version and server_version.lower() != "unknown":
+                            version = server_version
+                    except Exception:
+                        pass
                     raise RuntimeError(
-                        f"schedule {schedule.id} variables read failed ({type(exc).__name__})"
-                    ) from exc
+                        f"schedule {schedule.id} variables field is missing from the GitLab API response "
+                        f"(GitLab version: {version}). GitLab may omit schedule variables unless the caller is "
+                        "a Maintainer/Owner or the schedule owner; check those permissions and whether the "
+                        "instance response matches the documented API contract."
+                    )
+
+                raw_variables = attributes["variables"]
+                if not isinstance(raw_variables, list) or any(
+                    not isinstance(variable, dict)
+                    or not isinstance(variable.get("key"), str)
+                    or not isinstance(variable.get("value"), str)
+                    for variable in raw_variables
+                ):
+                    raise TypeError("unexpected variables field shape")
+                variables = {variable["key"]: variable["value"] for variable in raw_variables}
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                raise RuntimeError(
+                    f"schedule {schedule.id} variables response has an unexpected shape ({type(exc).__name__})"
+                ) from exc
             result.append(
                 ScheduleInfo(
                     id=schedule.id,

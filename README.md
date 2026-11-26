@@ -11,7 +11,23 @@ MCP server for GitLab CI/CD. Lets an LLM agent (Claude Code, Cursor, OpenCode, D
 
 Python and [FastMCP](https://github.com/modelcontextprotocol/python-sdk). Local stdio remains the default; opt-in Streamable HTTP supports shared deployments with one GitLab PAT per caller.
 
-Works with any GitLab — SaaS `gitlab.com` or self-hosted / on-prem. Designed with corporate networks in mind: configurable `NO_PROXY` handling, optional SSL-verify toggle, per-project scoping via env vars.
+Supports GitLab.com and self-managed GitLab; see the compatibility policy below. Designed with corporate networks in mind: configurable `NO_PROXY` handling, optional SSL-verify toggle, per-project scoping via env vars.
+
+### GitLab compatibility
+
+The project supports GitLab.com and self-managed releases that GitLab currently
+maintains. As of 2026-11-26, GitLab's maintained release lines are **19.4,
+19.5, and 19.6** ([GitLab maintenance policy](https://docs.gitlab.com/policy/maintenance/)).
+This list changes with GitLab's monthly release cycle; check the linked policy
+for the current list before planning upgrades.
+
+This is the project's support policy, not a claim that each server version has
+been tested by this repository. CI currently tests Python 3.10, 3.11, and 3.12;
+it does not run a GitLab server-version matrix.
+
+For `gitlab_list_schedules`, GitLab may omit schedule `variables` and `inputs`
+from API responses unless the caller is a Maintainer or Owner, or owns the
+schedule ([Pipeline schedules API](https://docs.gitlab.com/api/pipeline_schedules/)).
 
 ## Design highlights
 

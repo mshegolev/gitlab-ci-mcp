@@ -3,6 +3,20 @@
 All notable changes to `gitlab-ci-mcp` are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions use [SemVer](https://semver.org/).
 
+## [0.5.8] — 2026-11-26
+
+### Added
+- Optional `GITLAB_DISABLED_TOOL_GROUPS` configuration to omit selected tool
+  groups from MCP discovery while keeping every group enabled by default.
+- GitLab compatibility policy listing currently maintained GitLab release
+  lines, with tested-version limits documented separately.
+
+### Fixed
+- Read schedule variables from the pipeline schedule response. When GitLab
+  omits the field, report the schedule ID, detected server version, and
+  permission/API compatibility guidance instead of failing on an unsupported
+  variables-manager call or reporting an empty set.
+
 ## [0.5.7] — 2026-11-25
 
 ### Fixed
